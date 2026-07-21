@@ -7,7 +7,7 @@
 
   /* ---------- Defaults ---------- */
   const DEFAULT_STATE = {
-    income: 0,
+    income: 2022.64,
     expenses: [
       "Rent/Mortgage", "Utilities", "Internet/Phone", "Groceries",
       "Transportation", "Insurance", "Subscriptions", "Dining Out",
