@@ -20,7 +20,7 @@
       { name: "Cleaning", budgeted: 20 },
       { name: "Date night with Ayo (incl. transport)", budgeted: 150 },
       { name: "Spending on Ayo (buffer)", budgeted: 100 },
-      { name: "Personal allowance (to live by)", budgeted: 433 },
+      { name: "Personal allowance (to live by)", budgeted: 260 },
     ].map((e) => ({ id: uid(), name: e.name, budgeted: e.budgeted, actual: 0 })),
     savings: [
       { name: "Emergency / High-Yield pot", budgeted: 500 },
@@ -44,7 +44,7 @@
     ].map((d) => Object.assign({ id: uid() }, d)),
     tithePct: 10,
     emergencyMonths: 3,
-    monthlySavingsTarget: 500,
+    monthlySavingsTarget: 0,
     sinkingFunds: [
       { id: uid(), name: "Germany trip (hotel + spend)", cost: 580, saved: 0, date: nextMonthISO() },
       { id: uid(), name: "Milan trip with Ayo", cost: 700, saved: 0, date: monthsAheadISO(2) },
