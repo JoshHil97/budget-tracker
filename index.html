@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#6f4e37" />
   <title>Budget &amp; Savings Goals</title>
-  <link rel="stylesheet" href="styles.css?v=backup-20260721" />
+  <link rel="stylesheet" href="styles.css?v=1.0.0" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='18' fill='%236f4e37'/%3E%3Cpath d='M25 26h23c10 0 17 6 17 14 0 5-3 9-8 11 7 2 12 8 12 15 0 9-8 16-20 16H25V26zm14 12v10h8c3 0 5-2 5-5s-2-5-5-5h-8zm0 22v10h10c4 0 6-2 6-5s-2-5-6-5H39z' fill='%23fff8ea'/%3E%3Cpath d='M67 24l9 28h-8l-2-7H55l-2 7h-8l9-28h13zm-10 15h7l-3-10-4 10z' fill='%23d8b47b'/%3E%3C/svg%3E" />
 </head>
 <body>
@@ -53,7 +53,7 @@
       <div class="header-actions">
         <button id="profileSwitchBtn" class="btn btn--ghost" type="button">Switch profile</button>
         <button id="lockBtn" class="btn btn--ghost" type="button">Lock</button>
-        <button id="resetBtn" class="btn btn--ghost" type="button">Reset all data</button>
+        <button id="resetBtn" class="btn btn--ghost btn--ghost-danger" type="button">Reset all data</button>
       </div>
     </div>
   </header>
@@ -650,10 +650,16 @@
         <button class="btn" id="importCsvBtn" type="button">Import CSV</button>
         <input id="csvImportInput" type="file" accept=".csv,text/csv" hidden />
         <button class="btn" id="restoreRecoveryBtn" type="button">Restore recovery point</button>
-        <button class="btn" id="clearRecoveryBtn" type="button">Remove recovery point</button>
+        <button class="btn btn--danger" id="clearRecoveryBtn" type="button">Remove recovery point</button>
       </div>
       <p class="data-status" id="dataStatus" aria-live="polite"></p>
     </section>
+
+    <footer class="app-footer" aria-label="Release information">
+      <span id="versionLabel">Version 1.0.0</span>
+      <span>Local-first budget tracker</span>
+      <span id="releaseDateLabel">Released 21 July 2026</span>
+    </footer>
   </main>
 
   <!-- Sticky summary bar (mobile) -->
@@ -702,6 +708,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=backup-20260721"></script>
+  <script src="app.js?v=1.0.0"></script>
 </body>
 </html>

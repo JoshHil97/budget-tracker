@@ -7,6 +7,8 @@
   const ROOT_KEY = "budget-savings-app.profiles.v2";
   const SESSION_PROFILE_KEY = "budget-savings-app.activeProfile";
   const DATA_VERSION = 3;
+  const APP_VERSION = "1.0.0";
+  const RELEASE_DATE = "21 July 2026";
   const BACKUP_FORMAT = "budget-tracker-backup";
   const BACKUP_FORMAT_VERSION = 1;
   const RECOVERY_KEY = "budget-savings-app.recovery.latest";
@@ -266,19 +268,109 @@
   }
 
   let pendingConfirm = null;
+  let modalFocusReturn = null;
+
+  function modalFocusable(modal) {
+    return Array.from(modal.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"))
+      .filter((node) => !node.disabled && node.offsetParent !== null);
+  }
+
+  function openManagedModal(modalId, focusId) {
+    const modal = document.getElementById(modalId);
+    if (!modal) return;
+    modalFocusReturn = document.activeElement;
+    modal.hidden = false;
+    const focusTarget = focusId ? document.getElementById(focusId) : modalFocusable(modal)[0];
+    if (focusTarget) focusTarget.focus();
+  }
+
+  function closeManagedModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) modal.hidden = true;
+    const target = modalFocusReturn;
+    modalFocusReturn = null;
+    if (target && document.contains(target) && typeof target.focus === "function") {
+      window.setTimeout(() => target.focus({ preventScroll: true }), 0);
+    }
+  }
+
+  function visibleModal() {
+    return ["dataModal", "rolloverModal", "confirmModal"]
+      .map((id) => document.getElementById(id))
+      .find((modal) => modal && !modal.hidden);
+  }
+
+  function closeVisibleModal(modal) {
+    if (!modal) return;
+    if (modal.id === "dataModal") closeDataModal();
+    else if (modal.id === "rolloverModal") closeRollover();
+    else closeConfirm();
+  }
+
+  function handleModalKeydown(e) {
+    const modal = visibleModal();
+    if (!modal) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeVisibleModal(modal);
+      return;
+    }
+    if (e.key !== "Tab") return;
+    const focusable = modalFocusable(modal);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
+  function buttonVariantFor(label) {
+    const text = cleanName(label).toLowerCase();
+    if (/\b(delete|remove|reset|replace)\b/.test(text)) return "btn btn--danger";
+    if (/\b(cancel|close)\b/.test(text)) return "btn";
+    return "btn btn--primary";
+  }
+
+  function setActionButton(button, label) {
+    button.textContent = label || "Confirm";
+    button.className = buttonVariantFor(button.textContent);
+  }
+
+  function runButtonAction(button, busyText, action) {
+    if (!button || button.disabled) return;
+    const label = button.textContent;
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    if (busyText) button.textContent = busyText;
+    Promise.resolve()
+      .then(action)
+      .catch((e) => {
+        setDataStatus(e.message || "The action could not be completed. Please try again.", "neg");
+        notify("Action failed", "bad");
+      })
+      .finally(() => {
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+        button.textContent = label;
+      });
+  }
 
   function openConfirm(title, body, actionLabel, onConfirm) {
     pendingConfirm = onConfirm;
     document.getElementById("confirmTitle").textContent = title;
     document.getElementById("confirmBody").textContent = body;
-    document.getElementById("confirmOkBtn").textContent = actionLabel || "Delete";
-    document.getElementById("confirmModal").hidden = false;
-    document.getElementById("confirmCancelBtn").focus();
+    setActionButton(document.getElementById("confirmOkBtn"), actionLabel || "Delete");
+    openManagedModal("confirmModal", "confirmCancelBtn");
   }
 
   function closeConfirm() {
     pendingConfirm = null;
-    document.getElementById("confirmModal").hidden = true;
+    closeManagedModal("confirmModal");
   }
 
   function sectionAction(targetId, focusSelector, addKey) {
@@ -687,6 +779,8 @@
     document.getElementById("authScreen").hidden = true;
     document.getElementById("appShell").hidden = false;
     document.getElementById("profileSubtitle").textContent = profileMeta(profileId).subtitle;
+    document.getElementById("versionLabel").textContent = `Version ${APP_VERSION}`;
+    document.getElementById("releaseDateLabel").textContent = `Released ${RELEASE_DATE}`;
     renderAll();
   }
 
@@ -1034,12 +1128,11 @@
       ]));
     });
     document.getElementById("rolloverModal").dataset.targetMonth = target;
-    document.getElementById("rolloverModal").hidden = false;
-    document.getElementById("rolloverCancelBtn").focus();
+    openManagedModal("rolloverModal", "rolloverCancelBtn");
   }
 
   function closeRollover() {
-    document.getElementById("rolloverModal").hidden = true;
+    closeManagedModal("rolloverModal");
   }
 
   function confirmRollover() {
@@ -3093,7 +3186,7 @@
       format: BACKUP_FORMAT,
       formatVersion: BACKUP_FORMAT_VERSION,
       exportedAt: new Date().toISOString(),
-      appVersion: "local-vanilla",
+      appVersion: APP_VERSION,
       scope: scope === "all" ? "all-profiles" : "current-profile",
       metadata: {
         dataVersion: DATA_VERSION,
@@ -3197,14 +3290,13 @@
     opts.textContent = "";
     (Array.isArray(bodyNodes) ? bodyNodes : [bodyNodes]).filter(Boolean).forEach((n) => body.appendChild(typeof n === "string" ? el("p", { text: n }) : n));
     (optionsNodes || []).forEach((n) => opts.appendChild(n));
-    document.getElementById("dataModalConfirmBtn").textContent = confirmText || "Confirm";
-    document.getElementById("dataModal").hidden = false;
-    document.getElementById("dataModalCancelBtn").focus();
+    setActionButton(document.getElementById("dataModalConfirmBtn"), confirmText || "Confirm");
+    openManagedModal("dataModal", "dataModalCancelBtn");
   }
 
   function closeDataModal() {
     pendingDataAction = null;
-    document.getElementById("dataModal").hidden = true;
+    closeManagedModal("dataModal");
   }
 
   function handleBackupFile(file) {
@@ -3329,9 +3421,12 @@
   }
 
   function clearRecoveryPoint() {
-    localStorage.removeItem(RECOVERY_KEY);
-    renderDataManagement();
-    setDataStatus("Recent local recovery point removed.");
+    openConfirm("Remove recovery point?", "This deletes the latest local recovery point from this browser. Your current budget data will not be changed.", "Remove", () => {
+      localStorage.removeItem(RECOVERY_KEY);
+      renderDataManagement();
+      setDataStatus("Recent local recovery point removed.");
+      notify("Recovery point removed");
+    });
   }
 
   function csvText(rows) {
@@ -3429,6 +3524,7 @@
   }
 
   function handleCsvFile(file) {
+    if (!file) return;
     readFileText(file, "CSV", (text) => {
       const type = document.getElementById("csvImportType").value;
       const parsed = previewCsvImport(type, parseCsv(text), file.name);
@@ -3716,14 +3812,21 @@
     state = null;
     showAuth();
   });
-  document.getElementById("downloadBackupBtn").addEventListener("click", downloadBackup);
+  document.addEventListener("keydown", handleModalKeydown);
+  document.getElementById("downloadBackupBtn").addEventListener("click", (e) => {
+    runButtonAction(e.currentTarget, "Preparing...", downloadBackup);
+  });
   document.getElementById("restoreBackupBtn").addEventListener("click", () => document.getElementById("restoreBackupInput").click());
   document.getElementById("restoreBackupInput").addEventListener("change", (e) => {
     handleBackupFile(e.target.files && e.target.files[0]);
     e.target.value = "";
   });
-  document.getElementById("exportCsvBtn").addEventListener("click", exportCsv);
-  document.getElementById("downloadTemplateBtn").addEventListener("click", downloadTemplate);
+  document.getElementById("exportCsvBtn").addEventListener("click", (e) => {
+    runButtonAction(e.currentTarget, "Exporting...", exportCsv);
+  });
+  document.getElementById("downloadTemplateBtn").addEventListener("click", (e) => {
+    runButtonAction(e.currentTarget, "Preparing...", downloadTemplate);
+  });
   document.getElementById("importCsvBtn").addEventListener("click", () => document.getElementById("csvImportInput").click());
   document.getElementById("csvImportInput").addEventListener("change", (e) => {
     handleCsvFile(e.target.files && e.target.files[0]);
@@ -3737,13 +3840,14 @@
   });
   document.getElementById("dataModalConfirmBtn").addEventListener("click", () => {
     const action = pendingDataAction;
-    if (action) action();
+    if (action) runButtonAction(document.getElementById("dataModalConfirmBtn"), "Working...", action);
   });
   document.getElementById("confirmCancelBtn").addEventListener("click", closeConfirm);
   document.getElementById("confirmModal").addEventListener("click", (e) => {
     if (e.target.id === "confirmModal") closeConfirm();
   });
   document.getElementById("confirmOkBtn").addEventListener("click", () => {
+    if (document.getElementById("confirmOkBtn").disabled) return;
     const action = pendingConfirm;
     closeConfirm();
     if (action) action();

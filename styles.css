@@ -707,6 +707,13 @@ body {
 .btn--danger:hover { background: #8f1717; }
 .btn--ghost { background: transparent; color: #fff; border-color: rgba(255,255,255,.5); }
 .btn--ghost:hover { background: rgba(255,255,255,.12); }
+.btn--ghost-danger { border-color: rgba(255,255,255,.68); }
+.btn--ghost-danger:hover { background: rgba(185, 28, 28, .22); border-color: rgba(255,255,255,.86); }
+.btn[aria-busy="true"],
+.btn:disabled {
+  cursor: wait;
+  opacity: .72;
+}
 .btn--icon {
   min-height: 34px; min-width: 34px; padding: 4px 8px;
   color: var(--c-muted); border-color: transparent; background: transparent;
@@ -727,6 +734,37 @@ body {
   color: var(--c-text);
   width: 100%;
   min-height: 42px;
+}
+.app-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  justify-content: center;
+  color: var(--c-muted);
+  font-size: .82rem;
+  font-weight: 700;
+  line-height: 1.35;
+  padding: 8px 0 22px;
+  text-align: center;
+}
+.app-footer span + span::before {
+  content: "";
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin-right: 16px;
+  border-radius: 999px;
+  background: var(--c-border);
+  vertical-align: middle;
+}
+@media (max-width: 480px) {
+  .app-footer { display: grid; gap: 4px; }
+  .app-footer span + span::before { display: none; }
+}
+
+@media (max-width: 340px) {
+  .section-nav { gap: 4px; padding: 5px; }
+  .section-nav a { padding: 7px 8px; font-size: .8rem; }
 }
 .input--compact {
   min-height: 36px;
