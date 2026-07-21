@@ -347,19 +347,19 @@
     }, ["✕"]);
 
     const cells = [
-      el("td", { class: "col-name" }, [nameInput]),
-      el("td", { class: "col-num" }, [budgeted]),
+      el("td", { class: "col-name", "data-label": "Category" }, [nameInput]),
+      el("td", { class: "col-num", "data-label": "Budgeted" }, [budgeted]),
     ];
     const logged = expenseActual(item) - num(item.actual);
-    cells.push(el("td", { class: "col-num" }, logged > 0 ? [
+    cells.push(el("td", { class: "col-num", "data-label": "Actual" }, logged > 0 ? [
       actual,
       el("span", { class: "logged-hint", text: `+ ${money(logged)} logged` }),
     ] : [actual]));
     if (withDiff) {
       const diff = num(item.budgeted) - expenseActual(item);
-      cells.push(el("td", { class: "col-num cell-calc " + diffClass(diff) }, [money(diff)]));
+      cells.push(el("td", { class: "col-num cell-calc " + diffClass(diff), "data-label": "Diff" }, [money(diff)]));
     }
-    cells.push(el("td", { class: "col-act" }, [del]));
+    cells.push(el("td", { class: "col-act", "data-label": "" }, [del]));
     return el("tr", {}, cells);
   }
 
@@ -399,7 +399,9 @@
 
   function renderSummary() {
     const t = totals();
+    const plannedCommitments = t.tithe + t.expBudgeted + t.savBudgeted + state.sinkingFunds.reduce((total, f) => total + sinkingMonthly(f), 0);
     document.getElementById("sumIncome").textContent = money(t.income);
+    document.getElementById("sumPlannedCommitments").textContent = money(plannedCommitments);
     document.getElementById("sumTithe").textContent = money(t.tithe);
     document.getElementById("sumExpenses").textContent = money(t.expActual);
     document.getElementById("sumSavings").textContent = money(t.savActual);
@@ -562,11 +564,11 @@
       onclick: () => { state.transactions = state.transactions.filter((x) => x.id !== tx.id); save(); renderTransactions(); renderExpenses(); renderSummary(); },
     }, ["✕"]);
     return el("tr", {}, [
-      el("td", { class: "col-date" }, [date]),
-      el("td", { class: "col-name" }, [category]),
-      el("td", { class: "col-name" }, [note]),
-      el("td", { class: "col-num" }, [amount]),
-      el("td", { class: "col-act" }, [del]),
+      el("td", { class: "col-date", "data-label": "Date" }, [date]),
+      el("td", { class: "col-name", "data-label": "Category" }, [category]),
+      el("td", { class: "col-name", "data-label": "Note" }, [note]),
+      el("td", { class: "col-num", "data-label": "Amount" }, [amount]),
+      el("td", { class: "col-act", "data-label": "" }, [del]),
     ]);
   }
 
@@ -713,19 +715,19 @@
     const apr = input("apr", { attrs: { type: "number", inputmode: "decimal", min: "0", step: "0.1", class: "cell-input cell-input--num editable", placeholder: "0", "aria-label": "APR" } });
     const payment = input("payment", { attrs: { type: "number", inputmode: "decimal", min: "0", step: "0.01", class: "cell-input cell-input--num editable", placeholder: "0.00", "aria-label": "Monthly payment" } });
 
-    const payoffCell = el("td", { class: "col-num cell-calc " + payoffClass(d) }, [payoffText(d)]);
+    const payoffCell = el("td", { class: "col-num cell-calc " + payoffClass(d), "data-label": "Payoff" }, [payoffText(d)]);
     const del = el("button", {
       class: "btn btn--icon", type: "button", title: "Remove debt", "aria-label": "Remove debt",
       onclick: () => { state.debts = state.debts.filter((x) => x.id !== d.id); save(); renderDebts(); },
     }, ["✕"]);
 
     return el("tr", {}, [
-      el("td", { class: "col-name" }, [name]),
-      el("td", { class: "col-num" }, [balance]),
-      el("td", { class: "col-num" }, [apr]),
-      el("td", { class: "col-num" }, [payment]),
+      el("td", { class: "col-name", "data-label": "Debt" }, [name]),
+      el("td", { class: "col-num", "data-label": "Balance" }, [balance]),
+      el("td", { class: "col-num", "data-label": "APR %" }, [apr]),
+      el("td", { class: "col-num", "data-label": "Monthly" }, [payment]),
       payoffCell,
-      el("td", { class: "col-act" }, [del]),
+      el("td", { class: "col-act", "data-label": "" }, [del]),
     ]);
   }
 
@@ -768,7 +770,7 @@
   }
 
   function makeSinkingRow(f) {
-    const monthlyCell = el("td", { class: "col-num cell-calc" }, [money(sinkingMonthly(f))]);
+    const monthlyCell = el("td", { class: "col-num cell-calc", "data-label": "/ month" }, [money(sinkingMonthly(f))]);
     const onEdit = () => {
       save();
       monthlyCell.textContent = money(sinkingMonthly(f));
@@ -802,13 +804,13 @@
       onclick: () => { state.sinkingFunds = state.sinkingFunds.filter((x) => x.id !== f.id); save(); renderSinking(); },
     }, ["✕"]);
     return el("tr", {}, [
-      el("td", { class: "col-name" }, [name]),
-      el("td", { class: "col-num" }, [cost]),
-      el("td", { class: "col-num" }, [saved]),
-      el("td", { class: "col-num" }, [start]),
-      el("td", { class: "col-num" }, [date]),
+      el("td", { class: "col-name", "data-label": "Fund" }, [name]),
+      el("td", { class: "col-num", "data-label": "Total cost" }, [cost]),
+      el("td", { class: "col-num", "data-label": "Saved" }, [saved]),
+      el("td", { class: "col-num", "data-label": "From" }, [start]),
+      el("td", { class: "col-num", "data-label": "By" }, [date]),
       monthlyCell,
-      el("td", { class: "col-act" }, [del]),
+      el("td", { class: "col-act", "data-label": "" }, [del]),
     ]);
   }
 
@@ -935,12 +937,12 @@
         onclick: () => { state.history = state.history.filter((x) => x.id !== h.id); save(); renderHistory(); },
       }, ["✕"]);
       body.appendChild(el("tr", {}, [
-        el("td", { class: "col-name", text: h.label }),
-        el("td", { class: "col-num cell-calc", text: money(h.income) }),
-        el("td", { class: "col-num cell-calc", text: money(h.expenses) }),
-        el("td", { class: "col-num cell-calc", text: money(h.savings) }),
-        el("td", { class: "col-num cell-calc " + (h.leftover < 0 ? "neg" : "pos"), text: money(h.leftover) }),
-        el("td", { class: "col-act" }, [del]),
+        el("td", { class: "col-name", "data-label": "Month", text: h.label }),
+        el("td", { class: "col-num cell-calc", "data-label": "Income", text: money(h.income) }),
+        el("td", { class: "col-num cell-calc", "data-label": "Expenses", text: money(h.expenses) }),
+        el("td", { class: "col-num cell-calc", "data-label": "Savings", text: money(h.savings) }),
+        el("td", { class: "col-num cell-calc " + (h.leftover < 0 ? "neg" : "pos"), "data-label": "Left over", text: money(h.leftover) }),
+        el("td", { class: "col-act", "data-label": "" }, [del]),
       ]));
     });
 
