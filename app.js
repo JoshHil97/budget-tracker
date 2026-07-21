@@ -421,10 +421,10 @@
 
   /* ---------- Donut chart: expenses vs each savings category ---------- */
   function renderBreakdownChart(t) {
-    const palette = ["#ef4444", "#14b8a6", "#0ea5e9", "#8b5cf6", "#f59e0b", "#ec4899", "#10b981", "#6366f1", "#f97316"];
+    const palette = ["#b91c1c", "#9a6b4f", "#b88733", "#7a3f52", "#0e7490", "#b45309", "#6f4e37", "#4d7c0f", "#c08457"];
     const segments = [];
-    if (t.tithe > 0) segments.push({ label: "Tithe / Offering", value: t.tithe, color: "#a855f7" });
-    if (t.expActual > 0) segments.push({ label: "Expenses", value: t.expActual, color: "#ef4444" });
+    if (t.tithe > 0) segments.push({ label: "Tithe / Offering", value: t.tithe, color: "#7a3f52" });
+    if (t.expActual > 0) segments.push({ label: "Expenses", value: t.expActual, color: "#b91c1c" });
     state.savings.forEach((s, i) => {
       if (num(s.actual) > 0) segments.push({ label: s.name || "Savings", value: num(s.actual), color: palette[(i + 1) % palette.length] });
     });
@@ -880,12 +880,12 @@
     const debtMonthsLeft = debtAlloc > 0.005 ? Math.ceil(totalOwed / debtAlloc) : 0;
 
     const rows = [
-      { label: "Tithe / Offering", sub: num(state.tithePct) + "% of income (flexible)", amount: titheAlloc, color: "#a855f7", show: tithe > 0 },
+      { label: "Tithe / Offering", sub: num(state.tithePct) + "% of income (flexible)", amount: titheAlloc, color: "#7a3f52", show: tithe > 0 },
       { label: "Essentials (needs)", sub: "bills + allowances", amount: needsAlloc, color: "#b91c1c", show: needs > 0 },
       { label: "Trip & sinking funds", sub: sinkingSub(), amount: sinkAlloc, color: "#b45309", show: sinkReq > 0 },
       { label: "Monthly savings", sub: emergencyTarget > 0 ? `into your pot · ${money(emgCurrent)} of ${money(emergencyTarget)} buffer` : "into your savings pot", amount: savingsAlloc, color: "#4d7c0f", show: savingsTarget > 0 },
       { label: "Debt payoff", sub: debtTarget ? `${debtTarget} first · ${money(totalOwed)} left` : "all clear", amount: debtAlloc, color: "#dc2626", show: totalOwed > 0 },
-      { label: "Free / investing", sub: "spare to grow", amount: investAlloc, color: "#0e7490", show: income > 0 },
+      { label: "Free / investing", sub: "spare to grow", amount: investAlloc, color: "#9a6b4f", show: income > 0 },
     ];
 
     rows.filter((r) => r.show).forEach((r) => {
