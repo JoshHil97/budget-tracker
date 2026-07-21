@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#0f766e" />
+  <meta name="theme-color" content="#6f4e37" />
   <title>Budget &amp; Savings Goals</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%92%B7%3C/text%3E%3C/svg%3E" />
@@ -141,7 +141,11 @@
       <div class="card__head">
         <h2>📋 This month&rsquo;s plan</h2>
       </div>
-      <p class="section-hint" id="planIntro">How to split this month&rsquo;s income so you never run short. Priority: tithe → essentials → 3-month safety buffer → trip &amp; goals → debt → investing.</p>
+      <p class="section-hint" id="planIntro">How to split this month&rsquo;s income so you never run short. Priority: tithe → essentials → safety buffer → trip &amp; goals → debt → investing.</p>
+      <label class="buffer-ctrl">Safety buffer:
+        <input id="bufferInput" class="input editable" type="number" inputmode="numeric" min="1" max="12" step="1" />
+        months of essentials
+      </label>
       <div class="plan-status" id="planStatus"></div>
       <ul class="plan-list" id="planList"></ul>
       <p class="plan-learn" id="planLearn"></p>

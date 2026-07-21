@@ -241,7 +241,7 @@
       if (num(s.actual) > 0) segments.push({ label: s.name || "Savings", value: num(s.actual), color: palette[(i + 1) % palette.length] });
     });
     const leftover = t.leftover;
-    if (leftover > 0) segments.push({ label: "Left over", value: leftover, color: "#cbd5e1" });
+    if (leftover > 0) segments.push({ label: "Left over", value: leftover, color: "#d8c9b6" });
 
     const wrap = document.getElementById("breakdownChart");
     const legend = document.getElementById("breakdownLegend");
@@ -529,6 +529,11 @@
     if (!statusEl || !listEl) return;
     listEl.textContent = "";
 
+    const bufferInput = document.getElementById("bufferInput");
+    if (bufferInput && document.activeElement !== bufferInput) {
+      bufferInput.value = state.emergencyMonths != null ? state.emergencyMonths : 3;
+    }
+
     const t = totals();
     const income = t.income;
     const tithe = t.tithe;
@@ -566,7 +571,7 @@
       { label: "Tithe / Offering", sub: num(state.tithePct) + "% of income", amount: titheAlloc, color: "#a855f7", show: tithe > 0 },
       { label: "Essentials (needs)", sub: "your monthly bills", amount: needsAlloc, color: "#ef4444", show: needs > 0 },
       { label: "Trip & sinking funds", sub: sinkingSub(), amount: sinkAlloc, color: "#f59e0b", show: sinkReq > 0 },
-      { label: "Emergency buffer", sub: emergencyGap > 0 ? `building ${emergencyMonths}-mo safety · ${money(emgCurrent)} of ${money(emergencyTarget)}` : "fully funded 🎉", amount: safetyAlloc, color: "#14b8a6", show: emergencyGap > 0 || safetyAlloc > 0 },
+      { label: "Emergency buffer", sub: emergencyGap > 0 ? `building ${emergencyMonths}-mo safety · ${money(emgCurrent)} of ${money(emergencyTarget)}` : "fully funded 🎉", amount: safetyAlloc, color: "#9a6b4f", show: emergencyGap > 0 || safetyAlloc > 0 },
       { label: "Savings goals", sub: "your goal contributions", amount: goalAlloc, color: "#16a34a", show: goalReq > 0 },
       { label: "Extra debt payoff", sub: "beyond the minimums", amount: debtAlloc, color: "#dc2626", show: debtAlloc > 0 },
       { label: "Investing / free", sub: "surplus to grow", amount: investAlloc, color: "#0ea5e9", show: income > 0 },
@@ -731,6 +736,9 @@
   });
   document.getElementById("titheInput").addEventListener("input", (e) => {
     state.tithePct = num(e.target.value); save(); renderIncome(); renderSummary();
+  });
+  document.getElementById("bufferInput").addEventListener("input", (e) => {
+    state.emergencyMonths = num(e.target.value); save(); renderAdvisor();
   });
   document.querySelectorAll("[data-add]").forEach((btn) => {
     btn.addEventListener("click", () => addRow(btn.getAttribute("data-add")));
