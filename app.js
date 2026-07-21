@@ -44,7 +44,7 @@
     emergencyMonths: 3,
     monthlySavingsTarget: 500,
     sinkingFunds: [
-      { id: uid(), name: "Germany trip", cost: 0, saved: 0, date: nextMonthISO() },
+      { id: uid(), name: "Germany trip (hotel + spend)", cost: 580, saved: 0, date: nextMonthISO() },
     ],
     history: [], // { id, label, income, tithe, expenses, savings, leftover }
   };
