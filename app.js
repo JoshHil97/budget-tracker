@@ -20,8 +20,8 @@
       { name: "Family support (Mum/Dad)", budgeted: 75 },
       { name: "Personal care (toiletries, perfume…)", budgeted: 30 },
       { name: "Cleaning", budgeted: 20 },
-      { name: "Date night with Ayo (incl. transport)", budgeted: 150 },
-      { name: "Spending on Ayo (buffer)", budgeted: 100 },
+      { name: "Date night with Adedola (incl. transport)", budgeted: 150 },
+      { name: "Spending on Adedola (buffer)", budgeted: 100 },
       { name: "Personal allowance (to live by)", budgeted: 260 },
     ].map((e) => ({ id: uid(), name: e.name, budgeted: e.budgeted, actual: 0 })),
     savings: [
@@ -49,7 +49,7 @@
     monthlySavingsTarget: 0,
     sinkingFunds: [
       { id: uid(), name: "Germany trip (hotel + spend)", cost: 580, saved: 0, start: "", date: nextMonthISO() },
-      { id: uid(), name: "Milan trip with Ayo (est.)", cost: 700, saved: 0, start: monthsAheadISO(1), date: monthsAheadISO(2) },
+      { id: uid(), name: "Milan trip with Adedola (est.)", cost: 700, saved: 0, start: monthsAheadISO(1), date: monthsAheadISO(2) },
     ],
     transactions: [
       { id: uid(), date: todayISO(), category: "Transport", note: "Train / travel", amount: 0 },
@@ -87,8 +87,8 @@
   });
 
   const PROFILES = {
-    josh: { label: "Josh", subtitle: "Josh Special: giving first, debt down, future built." },
-    ayo: { label: "Ayo", subtitle: "Ayo's private budget room." },
+    josh: { label: "Bayo", subtitle: "Giving first, debt down, future built." },
+    ayo: { label: "Adedola", subtitle: "Private budget room." },
   };
 
   const SCRIPTURES = [
@@ -165,10 +165,10 @@
       const rawRoot = localStorage.getItem(ROOT_KEY);
       if (rawRoot) return JSON.parse(rawRoot);
       const legacy = localStorage.getItem(STORAGE_KEY);
-      const migratedJosh = legacy ? JSON.parse(legacy) : defaultsFor("josh");
+      const migratedBayo = legacy ? JSON.parse(legacy) : defaultsFor("josh");
       const freshRoot = {
         profiles: {
-          josh: { passHash: "", state: Object.assign(defaultsFor("josh"), migratedJosh) },
+          josh: { passHash: "", state: Object.assign(defaultsFor("josh"), migratedBayo) },
           ayo: { passHash: "", state: defaultsFor("ayo") },
         },
       };
@@ -240,7 +240,7 @@
     document.getElementById("authProfileName").textContent = PROFILES[profileId].label;
     document.getElementById("authPassLabel").textContent = record.passHash ? "Passcode" : "Create passcode";
     document.getElementById("authSubmitBtn").textContent = record.passHash ? "Unlock" : "Create & unlock";
-    document.getElementById("authNote").textContent = record.passHash ? "" : "First time here: choose at least 4 characters.";
+    document.getElementById("authNote").textContent = "";
     document.getElementById("passcodeInput").value = "";
     document.getElementById("passcodeInput").focus();
     saveRoot();
@@ -917,7 +917,7 @@
     if (histExp.length >= 1) {
       learnEl.textContent = `Learning from ${histExp.length} saved month${histExp.length === 1 ? "" : "s"}: your essentials have averaged ${money(avgActual)}${needsBudget > 0 ? ` vs your ${money(needsBudget)} budget` : ""}.`;
     } else {
-      learnEl.textContent = "Tip: save a few months in Monthly history and I'll tune “essentials” to your real spending averages.";
+      learnEl.textContent = "";
     }
   }
 

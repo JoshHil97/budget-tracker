@@ -13,7 +13,7 @@ HTML/CSS/JS with data persisted in the browser's `localStorage`.
 - **Summary dashboard** — Income − Expenses − Savings = Left Over, shown
   prominently, plus a donut chart of where the month's money went (expenses vs.
   each savings category vs. unallocated).
-- **Private profile rooms** — Josh and Ayo each get separate local data and a
+- **Private profile rooms** — Bayo and Adedola each get separate local data and a
   passcode gate on the same app.
 - **Spending log** — add individual purchases by date, category, note, and
   amount; logged purchases roll into category Actual totals.
@@ -27,16 +27,6 @@ HTML/CSS/JS with data persisted in the browser's `localStorage`.
 - **Monthly history** — save a snapshot of the current month and see income vs.
   expenses vs. savings trend over time in a line chart.
 
-## Design notes
-
-- Mobile-first single-column layout with large tap targets and a sticky "Left
-  over" summary bar; expands to a multi-column dashboard on wider screens.
-- Editable fields are plain inputs; calculated/read-only values are shown as
-  muted, tabular text.
-- Colour is used meaningfully: green for on-track / under budget, amber and red
-  for behind or over budget.
-- Reset button clears all data back to defaults after a confirmation prompt.
-
 ## Running
 
 It's a static site — just open `index.html` in a browser, or serve the folder:
@@ -47,5 +37,4 @@ python3 -m http.server 8080
 ```
 
 All data stays in your browser via `localStorage` under the key
-`budget-savings-app.profiles.v2`. The passcode gate protects local profile
-switching in the browser; true server-side privacy would require backend auth.
+`budget-savings-app.profiles.v2`.
