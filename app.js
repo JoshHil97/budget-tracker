@@ -27,11 +27,37 @@
     debts: [
       { id: uid(), name: "", balance: 0, apr: 0, payment: 0 },
     ],
-    history: [], // { id, label, income, expenses, savings, leftover }
+    tithePct: 10,
+    emergencyMonths: 3,
+    sinkingFunds: [
+      { id: uid(), name: "Germany trip", cost: 0, saved: 0, date: nextMonthISO() },
+    ],
+    history: [], // { id, label, income, tithe, expenses, savings, leftover }
   };
 
   /* ---------- Utilities ---------- */
   function uid() { return "id" + Math.random().toString(36).slice(2, 10); }
+
+  // "YYYY-MM" for the first day of next month (used for a default trip date).
+  function nextMonthISO() {
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() + 1);
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+  }
+
+  // Whole months from now until the 1st of a "YYYY-MM" month, floored at 1.
+  function monthsUntil(iso) {
+    if (!iso) return 1;
+    const parts = String(iso).split("-");
+    const y = parseInt(parts[0], 10), m = parseInt(parts[1], 10);
+    if (!y || !m) return 1;
+    const now = new Date();
+    const months = (y - now.getFullYear()) * 12 + (m - 1 - now.getMonth());
+    return Math.max(months, 1);
+  }
+
+  function avg(list) { return list.length ? list.reduce((a, b) => a + b, 0) / list.length : 0; }
 
   function num(v) {
     const n = parseFloat(v);
@@ -88,8 +114,9 @@
     const savBudgeted = sum(state.savings, "budgeted");
     const savActual = sum(state.savings, "actual");
     const income = num(state.income);
-    const leftover = income - expActual - savActual;
-    return { income, expBudgeted, expActual, savBudgeted, savActual, leftover };
+    const tithe = income * (num(state.tithePct) / 100);
+    const leftover = income - tithe - expActual - savActual;
+    return { income, tithe, expBudgeted, expActual, savBudgeted, savActual, leftover };
   }
 
   /* ---------- Renderers ---------- */
@@ -97,15 +124,20 @@
     renderIncome();
     renderExpenses();
     renderSavings();
+    renderSinking();
     renderSummary();
     renderGoals();
     renderDebts();
     renderHistory();
+    renderAdvisor();
   }
 
   function renderIncome() {
     const input = document.getElementById("incomeInput");
     if (document.activeElement !== input) input.value = state.income || "";
+    const tithe = document.getElementById("titheInput");
+    if (document.activeElement !== tithe) tithe.value = (state.tithePct != null ? state.tithePct : "");
+    document.getElementById("titheAmount").textContent = money(totals().tithe);
   }
 
   function makeAllocRow(item, listKey, withDiff) {
@@ -181,6 +213,7 @@
   function renderSummary() {
     const t = totals();
     document.getElementById("sumIncome").textContent = money(t.income);
+    document.getElementById("sumTithe").textContent = money(t.tithe);
     document.getElementById("sumExpenses").textContent = money(t.expActual);
     document.getElementById("sumSavings").textContent = money(t.savActual);
 
@@ -195,12 +228,14 @@
     sticky.className = "sticky-bar__value " + (t.leftover < 0 ? "neg" : "pos");
 
     renderBreakdownChart(t);
+    renderAdvisor();
   }
 
   /* ---------- Donut chart: expenses vs each savings category ---------- */
   function renderBreakdownChart(t) {
     const palette = ["#ef4444", "#14b8a6", "#0ea5e9", "#8b5cf6", "#f59e0b", "#ec4899", "#10b981", "#6366f1", "#f97316"];
     const segments = [];
+    if (t.tithe > 0) segments.push({ label: "Tithe / Offering", value: t.tithe, color: "#a855f7" });
     if (t.expActual > 0) segments.push({ label: "Expenses", value: t.expActual, color: "#ef4444" });
     state.savings.forEach((s, i) => {
       if (num(s.actual) > 0) segments.push({ label: s.name || "Savings", value: num(s.actual), color: palette[(i + 1) % palette.length] });
@@ -276,7 +311,7 @@
 
     const name = el("input", {
       class: "goal__name editable", type: "text", value: g.name, "aria-label": "Goal name",
-      oninput: (e) => { g.name = e.target.value; save(); },
+      oninput: (e) => { g.name = e.target.value; save(); renderAdvisor(); },
     });
     const del = el("button", {
       class: "btn btn--icon", type: "button", title: "Remove goal", "aria-label": "Remove goal",
@@ -291,7 +326,7 @@
           el("input", {
             class: "input input--money editable", type: "number", inputmode: "decimal",
             min: "0", step: "0.01", value: g[key] || "", placeholder: "0.00", "aria-label": label,
-            oninput: (e) => { g[key] = num(e.target.value); save(); refreshGoalCard(g, card); },
+            oninput: (e) => { g[key] = num(e.target.value); save(); refreshGoalCard(g, card); renderAdvisor(); },
           }),
         ]),
       ]);
@@ -376,6 +411,7 @@
           save();
           payoffCell.textContent = payoffText(d);
           payoffCell.className = "col-num cell-calc " + payoffClass(d);
+          renderAdvisor();
         },
       }, opts.attrs));
     }
@@ -414,6 +450,157 @@
     if (m === Infinity) return "neg";
     if (m === 0) return "pos";
     return "";
+  }
+
+  /* ---------- Sinking funds (upcoming one-off costs) ---------- */
+  function sinkingMonthly(f) {
+    const remaining = Math.max(num(f.cost) - num(f.saved), 0);
+    return remaining / monthsUntil(f.date);
+  }
+
+  function updateSinkingTotals() {
+    const totalEl = document.getElementById("sinkingMonthlyTotal");
+    if (totalEl) totalEl.textContent = money(state.sinkingFunds.reduce((tt, f) => tt + sinkingMonthly(f), 0));
+    renderAdvisor();
+  }
+
+  function renderSinking() {
+    const body = document.getElementById("sinkingBody");
+    body.textContent = "";
+    state.sinkingFunds.forEach((f) => body.appendChild(makeSinkingRow(f)));
+    updateSinkingTotals();
+  }
+
+  function makeSinkingRow(f) {
+    const monthlyCell = el("td", { class: "col-num cell-calc" }, [money(sinkingMonthly(f))]);
+    const onEdit = () => {
+      save();
+      monthlyCell.textContent = money(sinkingMonthly(f));
+      updateSinkingTotals();
+    };
+    const name = el("input", {
+      class: "cell-input cell-input--name editable", type: "text", value: f.name,
+      placeholder: "e.g. Germany trip", "aria-label": "Fund name",
+      oninput: (e) => { f.name = e.target.value; save(); },
+    });
+    const cost = el("input", {
+      class: "cell-input cell-input--num editable", type: "number", inputmode: "decimal",
+      min: "0", step: "0.01", value: f.cost || "", placeholder: "0.00", "aria-label": "Total cost",
+      oninput: (e) => { f.cost = num(e.target.value); onEdit(); },
+    });
+    const saved = el("input", {
+      class: "cell-input cell-input--num editable", type: "number", inputmode: "decimal",
+      min: "0", step: "0.01", value: f.saved || "", placeholder: "0.00", "aria-label": "Saved so far",
+      oninput: (e) => { f.saved = num(e.target.value); onEdit(); },
+    });
+    const date = el("input", {
+      class: "cell-input editable", type: "month", value: f.date || "", "aria-label": "Needed by",
+      oninput: (e) => { f.date = e.target.value; onEdit(); },
+    });
+    const del = el("button", {
+      class: "btn btn--icon", type: "button", title: "Remove fund", "aria-label": "Remove fund",
+      onclick: () => { state.sinkingFunds = state.sinkingFunds.filter((x) => x.id !== f.id); save(); renderSinking(); },
+    }, ["✕"]);
+    return el("tr", {}, [
+      el("td", { class: "col-name" }, [name]),
+      el("td", { class: "col-num" }, [cost]),
+      el("td", { class: "col-num" }, [saved]),
+      el("td", { class: "col-num" }, [date]),
+      monthlyCell,
+      el("td", { class: "col-act" }, [del]),
+    ]);
+  }
+
+  /* ---------- Advisor: this month's plan ---------- */
+  function findEmergencyGoal() {
+    return state.goals.find((g) => /emergency/i.test(g.name || ""));
+  }
+
+  function sinkingSub() {
+    const names = state.sinkingFunds.filter((f) => sinkingMonthly(f) > 0).map((f) => f.name || "fund");
+    if (!names.length) return "upcoming one-off costs";
+    return names.slice(0, 2).join(", ") + (names.length > 2 ? " +" + (names.length - 2) : "");
+  }
+
+  function renderAdvisor() {
+    const statusEl = document.getElementById("planStatus");
+    const listEl = document.getElementById("planList");
+    const learnEl = document.getElementById("planLearn");
+    if (!statusEl || !listEl) return;
+    listEl.textContent = "";
+
+    const t = totals();
+    const income = t.income;
+    const tithe = t.tithe;
+
+    // Essentials estimate — from budget, tuned by history when available.
+    const needsBudget = sum(state.expenses, "budgeted");
+    const histExp = state.history.map((h) => num(h.expenses)).filter((x) => x > 0);
+    const avgActual = avg(histExp);
+    const needs = needsBudget > 0 ? needsBudget : avgActual;
+
+    const emergencyMonths = num(state.emergencyMonths) || 3;
+    const emg = findEmergencyGoal();
+    const emgCurrent = emg ? num(emg.current) : 0;
+    const emergencyTarget = Math.max(needs * emergencyMonths, emg ? num(emg.target) : 0);
+    const emergencyGap = Math.max(emergencyTarget - emgCurrent, 0);
+
+    const sinkReq = state.sinkingFunds.reduce((a, f) => a + sinkingMonthly(f), 0);
+    const goalReq = state.goals.filter((g) => g !== emg).reduce((a, g) => a + num(g.monthly), 0);
+    const debtBalance = sum(state.debts, "balance");
+
+    // Waterfall: fill each bucket in priority order until income runs out.
+    let rem = income;
+    const titheAlloc = Math.min(rem, tithe); rem -= titheAlloc;
+    const needsAlloc = Math.min(rem, needs); rem -= needsAlloc;
+    const sinkAlloc = Math.min(rem, sinkReq); rem -= sinkAlloc;
+    const safetyAlloc = Math.min(rem, emergencyGap); rem -= safetyAlloc;
+    const goalAlloc = Math.min(rem, goalReq); rem -= goalAlloc;
+    const debtAlloc = debtBalance > 0 ? Math.min(rem, debtBalance) : 0; rem -= debtAlloc;
+    const investAlloc = Math.max(rem, 0);
+
+    const needsShort = needs - needsAlloc;
+    const sinkShort = sinkReq - sinkAlloc;
+
+    const rows = [
+      { label: "Tithe / Offering", sub: num(state.tithePct) + "% of income", amount: titheAlloc, color: "#a855f7", show: tithe > 0 },
+      { label: "Essentials (needs)", sub: "your monthly bills", amount: needsAlloc, color: "#ef4444", show: needs > 0 },
+      { label: "Trip & sinking funds", sub: sinkingSub(), amount: sinkAlloc, color: "#f59e0b", show: sinkReq > 0 },
+      { label: "Emergency buffer", sub: emergencyGap > 0 ? `building ${emergencyMonths}-mo safety · ${money(emgCurrent)} of ${money(emergencyTarget)}` : "fully funded 🎉", amount: safetyAlloc, color: "#14b8a6", show: emergencyGap > 0 || safetyAlloc > 0 },
+      { label: "Savings goals", sub: "your goal contributions", amount: goalAlloc, color: "#16a34a", show: goalReq > 0 },
+      { label: "Extra debt payoff", sub: "beyond the minimums", amount: debtAlloc, color: "#dc2626", show: debtAlloc > 0 },
+      { label: "Investing / free", sub: "surplus to grow", amount: investAlloc, color: "#0ea5e9", show: income > 0 },
+    ];
+
+    rows.filter((r) => r.show).forEach((r) => {
+      listEl.appendChild(el("li", { class: "plan-row" }, [
+        el("span", { class: "plan-row__dot", style: `background:${r.color}` }),
+        el("span", { class: "plan-row__label" }, [r.label, el("span", { class: "plan-row__sub", text: r.sub })]),
+        el("span", { class: "plan-row__amt", text: money(r.amount) }),
+      ]));
+    });
+    if (income > 0) {
+      listEl.appendChild(el("li", { class: "plan-row plan-row--total" }, [
+        el("span", { class: "plan-row__dot", style: "background:transparent" }),
+        el("span", { class: "plan-row__label", text: "Total (income)" }),
+        el("span", { class: "plan-row__amt", text: money(income) }),
+      ]));
+    }
+
+    let status;
+    if (income <= 0) status = { type: "idle", text: "Enter your monthly income above to see your personalised plan." };
+    else if (needsShort > 0.005) status = { type: "warn", text: `⚠️ You're ${money(needsShort)} short on essentials after tithe. Trim spending or lower the tithe % temporarily — don't skip rent.` };
+    else if (sinkShort > 0.005) status = { type: "warn", text: `⚠️ Essentials are covered, but you're ${money(sinkShort)}/mo short to hit your trip & sinking-fund dates. Push a date back or free up cash.` };
+    else if (investAlloc > 0.005) status = { type: "ok", text: `✅ You're covered — ${money(investAlloc)} is free to invest or grow this month.` };
+    else status = { type: "ok", text: "✅ Every pound has a job and your essentials are safe this month." };
+    statusEl.className = "plan-status " + status.type;
+    statusEl.textContent = status.text;
+
+    if (histExp.length >= 1) {
+      learnEl.textContent = `Learning from ${histExp.length} saved month${histExp.length === 1 ? "" : "s"}: your essentials have averaged ${money(avgActual)}${needsBudget > 0 ? ` vs your ${money(needsBudget)} budget` : ""}.`;
+    } else {
+      learnEl.textContent = "Tip: save a few months in Monthly history and I'll tune “essentials” to your real spending averages.";
+    }
   }
 
   /* ---------- History ---------- */
@@ -510,6 +697,9 @@
     } else if (listKey === "debts") {
       state.debts.push({ id: uid(), name: "", balance: 0, apr: 0, payment: 0 });
       save(); renderDebts();
+    } else if (listKey === "sinking") {
+      state.sinkingFunds.push({ id: uid(), name: "New fund", cost: 0, saved: 0, date: nextMonthISO() });
+      save(); renderSinking();
     }
   }
 
@@ -518,7 +708,7 @@
     const label = new Date().toLocaleDateString("en-GB", { month: "short", year: "numeric" });
     const snap = {
       id: uid(), label,
-      income: t.income, expenses: t.expActual, savings: t.savActual, leftover: t.leftover,
+      income: t.income, tithe: t.tithe, expenses: t.expActual, savings: t.savActual, leftover: t.leftover,
     };
     // Replace an existing snapshot with the same label (same month) rather than duplicating.
     const existing = state.history.findIndex((h) => h.label === label);
@@ -537,7 +727,10 @@
 
   /* ---------- Wiring ---------- */
   document.getElementById("incomeInput").addEventListener("input", (e) => {
-    state.income = num(e.target.value); save(); renderSummary();
+    state.income = num(e.target.value); save(); renderIncome(); renderSummary();
+  });
+  document.getElementById("titheInput").addEventListener("input", (e) => {
+    state.tithePct = num(e.target.value); save(); renderIncome(); renderSummary();
   });
   document.querySelectorAll("[data-add]").forEach((btn) => {
     btn.addEventListener("click", () => addRow(btn.getAttribute("data-add")));

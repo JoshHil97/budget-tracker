@@ -29,6 +29,19 @@
           <input id="incomeInput" class="input input--money editable" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" />
         </span>
       </label>
+      <div class="tithe-row">
+        <label class="field tithe-pct">
+          <span class="field__label">Tithe / Offering</span>
+          <span class="input-pct">
+            <input id="titheInput" class="input editable" type="number" inputmode="decimal" min="0" max="100" step="0.5" placeholder="10" />
+            <span class="input-pct__symbol">%</span>
+          </span>
+        </label>
+        <div class="tithe-amount">
+          <span class="field__label">This month</span>
+          <span class="tithe-amount__value" id="titheAmount">£0.00</span>
+        </div>
+      </div>
     </section>
 
     <!-- Expenses -->
@@ -91,6 +104,49 @@
       </div>
     </section>
 
+    <!-- Upcoming & sinking funds -->
+    <section class="card" id="sinkingSection">
+      <div class="card__head">
+        <h2>Upcoming &amp; sinking funds</h2>
+        <button class="btn btn--sm" data-add="sinking" type="button">+ Add fund</button>
+      </div>
+      <p class="section-hint">One-off future costs (e.g. your Germany trip). Enter the total and the month you need it by — it works out the monthly set-aside.</p>
+      <div class="table-wrap">
+        <table class="alloc-table">
+          <thead>
+            <tr>
+              <th class="col-name">Fund</th>
+              <th class="col-num">Total cost</th>
+              <th class="col-num">Saved</th>
+              <th class="col-num">By</th>
+              <th class="col-num">/ month</th>
+              <th class="col-act" aria-label="actions"></th>
+            </tr>
+          </thead>
+          <tbody id="sinkingBody"></tbody>
+          <tfoot>
+            <tr class="totals-row">
+              <td>Set aside / month</td>
+              <td class="col-num" colspan="3"></td>
+              <td class="col-num" id="sinkingMonthlyTotal">£0.00</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+
+    <!-- This month's plan (advisor) -->
+    <section class="card card--plan" id="planSection">
+      <div class="card__head">
+        <h2>📋 This month&rsquo;s plan</h2>
+      </div>
+      <p class="section-hint" id="planIntro">How to split this month&rsquo;s income so you never run short. Priority: tithe → essentials → 3-month safety buffer → trip &amp; goals → debt → investing.</p>
+      <div class="plan-status" id="planStatus"></div>
+      <ul class="plan-list" id="planList"></ul>
+      <p class="plan-learn" id="planLearn"></p>
+    </section>
+
     <!-- Summary dashboard -->
     <section class="card" id="summarySection">
       <div class="card__head"><h2>Summary</h2></div>
@@ -98,6 +154,10 @@
         <div class="stat">
           <span class="stat__label">Income</span>
           <span class="stat__value" id="sumIncome">£0.00</span>
+        </div>
+        <div class="stat">
+          <span class="stat__label">Tithe (offering)</span>
+          <span class="stat__value" id="sumTithe">£0.00</span>
         </div>
         <div class="stat">
           <span class="stat__label">Expenses (actual)</span>
