@@ -6,6 +6,7 @@
   const STORAGE_KEY = "budget-savings-app.v1";
   const ROOT_KEY = "budget-savings-app.profiles.v2";
   const SESSION_PROFILE_KEY = "budget-savings-app.activeProfile";
+  const DATA_VERSION = 3;
 
   /* ---------- Defaults ---------- */
   const DEFAULT_STATE = {
@@ -110,6 +111,19 @@
   }
   function nextMonthISO() { return monthsAheadISO(1); }
   function todayISO() { return new Date().toISOString().slice(0, 10); }
+  function currentMonthId() { return todayISO().slice(0, 7); }
+  function monthIdFromOffset(baseMonth, offset) {
+    const [y, m] = String(baseMonth || currentMonthId()).split("-").map((x) => parseInt(x, 10));
+    const d = new Date(y || new Date().getFullYear(), (m || 1) - 1, 1);
+    d.setMonth(d.getMonth() + offset);
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+  }
+  function validMonthId(monthId) { return /^\d{4}-\d{2}$/.test(String(monthId || "")); }
+  function monthLabel(monthId, opts) {
+    if (!validMonthId(monthId)) return "this month";
+    const [y, m] = monthId.split("-").map((x) => parseInt(x, 10));
+    return new Date(y, m - 1, 1).toLocaleDateString("en-GB", Object.assign({ month: "long", year: "numeric" }, opts || {}));
+  }
 
   // Whole months from now to a "YYYY-MM" month (can be 0 or negative).
   function monthsUntilRaw(iso) {
@@ -306,6 +320,7 @@
   let root = loadRoot();
   let activeProfile = sessionStorage.getItem(SESSION_PROFILE_KEY) || "";
   let pendingProfile = "";
+  let activeMonth = "";
   let state = null;
   const viewPrefs = {
     goals: { sort: "completion", filter: "active" },
@@ -316,6 +331,83 @@
 
   function defaultsFor(profileId) {
     return structuredClone(profileId === "ayo" ? AYO_DEFAULT_STATE : DEFAULT_STATE);
+  }
+
+  function blankMonthFor(profileId, monthId, sourceState) {
+    const base = defaultsFor(profileId);
+    const source = sourceState || base;
+    return {
+      monthId,
+      status: "draft",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      income: 0,
+      incomeEntries: [],
+      expenses: [],
+      savings: [],
+      goals: structuredClone(source.goals || base.goals || []),
+      debts: structuredClone(source.debts || base.debts || []),
+      tithePct: source.tithePct != null ? source.tithePct : base.tithePct,
+      emergencyMonths: source.emergencyMonths != null ? source.emergencyMonths : base.emergencyMonths,
+      monthlySavingsTarget: 0,
+      sinkingFunds: structuredClone(source.sinkingFunds || base.sinkingFunds || []),
+      transactions: [],
+      history: source.history || [],
+      appliedRecurring: {},
+      monthNotes: [],
+    };
+  }
+
+  function normaliseMonthlyState(monthState, profileId, monthId, sharedHistory) {
+    const fallback = blankMonthFor(profileId, monthId, monthState || defaultsFor(profileId));
+    const next = Object.assign(fallback, monthState || {});
+    next.monthId = validMonthId(next.monthId) ? next.monthId : monthId;
+    next.status = next.status || "draft";
+    next.createdAt = next.createdAt || new Date().toISOString();
+    next.updatedAt = next.updatedAt || next.createdAt;
+    next.incomeEntries = Array.isArray(next.incomeEntries) ? next.incomeEntries : [];
+    next.expenses = Array.isArray(next.expenses) ? next.expenses : [];
+    next.savings = Array.isArray(next.savings) ? next.savings : [];
+    next.goals = Array.isArray(next.goals) ? next.goals : [];
+    next.debts = Array.isArray(next.debts) ? next.debts : [];
+    next.sinkingFunds = Array.isArray(next.sinkingFunds) ? next.sinkingFunds : [];
+    next.transactions = Array.isArray(next.transactions) ? next.transactions : [];
+    next.history = sharedHistory;
+    next.appliedRecurring = next.appliedRecurring || {};
+    next.monthNotes = Array.isArray(next.monthNotes) ? next.monthNotes : [];
+    return next;
+  }
+
+  function migrateProfileRecord(record, profileId) {
+    if (!record) record = { passHash: "", state: defaultsFor(profileId) };
+    const legacyState = Object.assign(defaultsFor(profileId), record.state || {});
+    const monthId = validMonthId(record.activeMonth) ? record.activeMonth : currentMonthId();
+    const sharedHistory = Array.isArray(record.history) ? record.history : (Array.isArray(legacyState.history) ? legacyState.history : []);
+
+    if (!record.months || typeof record.months !== "object") {
+      const migratedMonth = normaliseMonthlyState(Object.assign({}, legacyState, {
+        monthId,
+        status: legacyState.status || "draft",
+        appliedRecurring: legacyState.appliedRecurring || {},
+      }), profileId, monthId, sharedHistory);
+      record.months = { [monthId]: migratedMonth };
+      record.activeMonth = monthId;
+    } else {
+      record.activeMonth = validMonthId(record.activeMonth) ? record.activeMonth : monthId;
+      Object.keys(record.months).forEach((id) => {
+        record.months[id] = normaliseMonthlyState(record.months[id], profileId, id, sharedHistory);
+      });
+      if (!record.months[record.activeMonth]) {
+        record.months[record.activeMonth] = blankMonthFor(profileId, record.activeMonth, legacyState);
+        record.months[record.activeMonth].history = sharedHistory;
+      }
+    }
+
+    record.recurringItems = Array.isArray(record.recurringItems) ? record.recurringItems : [];
+    record.history = sharedHistory;
+    record.state = record.months[record.activeMonth];
+    record.dataVersion = DATA_VERSION;
+    return record;
   }
 
   function loadRoot() {
@@ -345,8 +437,176 @@
 
   function save() {
     if (!activeProfile || !root.profiles[activeProfile]) return;
-    root.profiles[activeProfile].state = state;
+    const record = profileRecord(activeProfile);
+    if (state && activeMonth) {
+      state.updatedAt = new Date().toISOString();
+      record.months[activeMonth] = state;
+      record.activeMonth = activeMonth;
+      record.state = state;
+      record.history = state.history || record.history || [];
+    }
     saveRoot();
+  }
+
+  function activeRecord() {
+    return activeProfile ? profileRecord(activeProfile) : null;
+  }
+
+  function switchMonth(monthId) {
+    if (!validMonthId(monthId) || !activeProfile) return;
+    save();
+    const record = profileRecord(activeProfile);
+    const source = state || record.state || defaultsFor(activeProfile);
+    if (!record.months[monthId]) {
+      record.months[monthId] = blankMonthFor(activeProfile, monthId, source);
+      record.months[monthId].history = record.history || [];
+    }
+    activeMonth = monthId;
+    record.activeMonth = monthId;
+    state = record.months[monthId];
+    record.state = state;
+    saveRoot();
+    renderAll();
+    notify(`Budget for ${monthLabel(monthId, { month: "long", year: "numeric" })} opened`);
+  }
+
+  function activeMonthOffset() {
+    const current = currentMonthId();
+    if (!validMonthId(activeMonth)) return 0;
+    const [ay, am] = activeMonth.split("-").map((x) => parseInt(x, 10));
+    const [cy, cm] = current.split("-").map((x) => parseInt(x, 10));
+    return (ay - cy) * 12 + (am - cm);
+  }
+
+  function monthHasPlan(monthState) {
+    if (!monthState) return false;
+    return num(monthState.income) > 0 ||
+      (monthState.incomeEntries || []).some((i) => num(i.amount) > 0) ||
+      (monthState.expenses || []).some((e) => cleanName(e.name) || num(e.budgeted) > 0 || num(e.actual) > 0) ||
+      (monthState.savings || []).some((s) => cleanName(s.name) || num(s.budgeted) > 0 || num(s.actual) > 0) ||
+      (monthState.transactions || []).some((tx) => num(tx.amount) > 0);
+  }
+
+  function monthStatusText() {
+    const offset = activeMonthOffset();
+    const pieces = [state && state.status === "completed" ? "Completed" : state && state.status === "saved" ? "Saved" : "Draft"];
+    if (offset === 0) pieces.push("real current calendar month");
+    else if (offset < 0) pieces.push("past budget");
+    else pieces.push("future budget");
+    return pieces.join(" · ");
+  }
+
+  function copyPlannedFrom(sourceMonth, targetMonth, mode) {
+    const replace = mode === "replace";
+    if (replace) {
+      targetMonth.income = num(sourceMonth.income);
+      targetMonth.incomeEntries = [];
+      targetMonth.expenses = [];
+      targetMonth.savings = [];
+      targetMonth.monthlySavingsTarget = num(sourceMonth.monthlySavingsTarget);
+    } else if (num(targetMonth.income) <= CURRENCY_TOLERANCE) {
+      targetMonth.income = num(sourceMonth.income);
+    }
+    mergeNamedRows(targetMonth.expenses, sourceMonth.expenses, "budgeted", replace);
+    mergeNamedRows(targetMonth.savings, sourceMonth.savings, "budgeted", replace);
+    targetMonth.monthNotes = (targetMonth.monthNotes || []).concat({ id: uid(), text: `Planned data copied from ${monthLabel(sourceMonth.monthId)}.`, createdAt: new Date().toISOString() });
+  }
+
+  function mergeNamedRows(target, source, amountKey, replace) {
+    (source || []).forEach((item) => {
+      const name = cleanName(item.name);
+      if (!name) return;
+      const existing = target.find((row) => cleanName(row.name).toLowerCase() === name.toLowerCase());
+      if (existing) {
+        if (replace) existing[amountKey] = num(item[amountKey]);
+        return;
+      }
+      target.push(Object.assign({}, item, { id: uid(), actual: 0 }));
+    });
+  }
+
+  function eligibleRecurringItems(monthId) {
+    const record = activeRecord();
+    if (!record) return [];
+    return (record.recurringItems || []).filter((item) => {
+      if (item.status === "paused") return false;
+      if (!validMonthId(item.start) || item.start > monthId) return false;
+      if (item.end && validMonthId(item.end) && item.end < monthId) return false;
+      if (item.frequency === "one-off") return item.start === monthId;
+      return item.frequency === "monthly";
+    });
+  }
+
+  function recurringStatus(item, monthId) {
+    if (item.status === "paused") return "Paused";
+    if (item.end && validMonthId(item.end) && item.end < (monthId || currentMonthId())) return "Ended";
+    return "Active";
+  }
+
+  function nextEligibleMonth(item) {
+    if (item.status === "paused") return "Paused";
+    const base = currentMonthId();
+    if (item.end && validMonthId(item.end) && item.end < base) return "Ended";
+    if (item.frequency === "one-off") return item.start >= base ? monthLabel(item.start) : "Ended";
+    return monthLabel(item.start > base ? item.start : base);
+  }
+
+  function applyRecurringToMonth(monthState, monthId) {
+    const applied = monthState.appliedRecurring || {};
+    let added = 0;
+    eligibleRecurringItems(monthId).forEach((item) => {
+      if (applied[item.id]) return;
+      if (applyRecurringItem(monthState, item)) {
+        applied[item.id] = { monthId, createdAt: new Date().toISOString() };
+        added += 1;
+      }
+    });
+    monthState.appliedRecurring = applied;
+    if (added) monthState.monthNotes = (monthState.monthNotes || []).concat({ id: uid(), text: `${added} recurring item${added === 1 ? "" : "s"} added to ${monthLabel(monthId)}.`, createdAt: new Date().toISOString() });
+    return added;
+  }
+
+  function applyRecurringItem(monthState, item) {
+    const amount = num(item.amount);
+    const name = cleanName(item.name);
+    if (!name || amount <= CURRENCY_TOLERANCE) return false;
+    if (item.type === "income") {
+      if ((monthState.incomeEntries || []).some((entry) => entry.recurringId === item.id)) return false;
+      monthState.incomeEntries = monthState.incomeEntries || [];
+      monthState.incomeEntries.push({ id: uid(), recurringId: item.id, name, amount });
+      monthState.income = sum(monthState.incomeEntries, "amount");
+      return true;
+    }
+    if (item.type === "expense") {
+      return upsertRecurringRow(monthState.expenses, item, "budgeted");
+    }
+    if (item.type === "savings") {
+      return upsertRecurringRow(monthState.savings, item, "budgeted");
+    }
+    if (item.type === "sinking") {
+      monthState.monthlySavingsTarget = num(monthState.monthlySavingsTarget) + amount;
+      return true;
+    }
+    if (item.type === "debt") {
+      const existing = (monthState.debts || []).find((d) => cleanName(d.name).toLowerCase() === name.toLowerCase());
+      if (existing) existing.payment = amount;
+      else monthState.debts.push({ id: uid(), name, originalBalance: 0, balance: amount, apr: 0, payment: amount });
+      return true;
+    }
+    return false;
+  }
+
+  function upsertRecurringRow(rows, item, key) {
+    const name = cleanName(item.name);
+    if (rows.some((row) => row.recurringId === item.id)) return false;
+    const existing = rows.find((row) => cleanName(row.name).toLowerCase() === name.toLowerCase());
+    if (existing) {
+      existing[key] = num(item.amount);
+      existing.recurringId = item.id;
+      return true;
+    }
+    rows.push({ id: uid(), recurringId: item.id, name, budgeted: num(item.amount), actual: 0 });
+    return true;
   }
 
   async function hashPasscode(passcode) {
@@ -368,8 +628,7 @@
   function profileRecord(profileId) {
     if (!root.profiles) root.profiles = {};
     if (!root.profiles[profileId]) root.profiles[profileId] = { passHash: "", state: defaultsFor(profileId) };
-    root.profiles[profileId].state = Object.assign(defaultsFor(profileId), root.profiles[profileId].state || {});
-    if (!Array.isArray(root.profiles[profileId].state.transactions)) root.profiles[profileId].state.transactions = [];
+    root.profiles[profileId] = migrateProfileRecord(root.profiles[profileId], profileId);
     return root.profiles[profileId];
   }
 
@@ -384,7 +643,9 @@
     activeProfile = profileId;
     sessionStorage.setItem(SESSION_PROFILE_KEY, profileId);
     const record = profileRecord(profileId);
+    activeMonth = record.activeMonth;
     state = record.state;
+    saveRoot();
     document.getElementById("authScreen").hidden = true;
     document.getElementById("appShell").hidden = false;
     document.getElementById("profileSubtitle").textContent = PROFILES[profileId].subtitle;
@@ -515,7 +776,9 @@
 
   /* ---------- Renderers ---------- */
   function renderAll() {
+    renderMonthPanel();
     renderOnboarding();
+    renderRecurring();
     renderIncome();
     renderExpenses();
     renderSavings();
@@ -529,6 +792,246 @@
     renderMoneyTrail();
     renderAnalytics();
     renderScripture();
+  }
+
+  function renderMonthPanel() {
+    const title = document.getElementById("activeMonthTitle");
+    const meta = document.getElementById("monthMeta");
+    const input = document.getElementById("activeMonthInput");
+    const notice = document.getElementById("monthNotice");
+    if (!title || !meta || !input || !notice || !state) return;
+    title.textContent = `Budget for ${monthLabel(activeMonth)}`;
+    meta.textContent = monthStatusText();
+    if (document.activeElement !== input) input.value = activeMonth;
+    const notes = (state.monthNotes || []).slice(-2).map((n) => n.text);
+    if (state.status === "completed" && activeMonthOffset() < 0) {
+      notes.unshift("You are viewing a completed past budget. Edit carefully because changes may alter comparisons.");
+    } else if (activeMonthOffset() < 0) {
+      notes.unshift("You are editing a past budget.");
+    } else if (!monthHasPlan(state)) {
+      notes.unshift("This month has no plan yet. Apply recurring items or copy the previous month to get started.");
+    }
+    notice.textContent = notes.join(" ");
+  }
+
+  function recurringGroups() {
+    return [
+      ["income", "Income"],
+      ["expense", "Expenses"],
+      ["savings", "Savings"],
+      ["sinking", "Sinking-fund contributions"],
+      ["debt", "Debt payments"],
+    ];
+  }
+
+  function renderRecurring() {
+    const list = document.getElementById("recurringList");
+    if (!list || !activeProfile) return;
+    const record = activeRecord();
+    const items = record.recurringItems || [];
+    list.textContent = "";
+    if (!items.length) {
+      list.appendChild(emptyState("No recurring items yet", "Mark regular income and commitments as recurring to prepare future months faster.", "Add recurring item", () => document.getElementById("recurringName").focus()));
+      return;
+    }
+    recurringGroups().forEach(([type, label]) => {
+      const groupItems = items.filter((item) => item.type === type);
+      if (!groupItems.length) return;
+      list.appendChild(el("h4", { class: "recurring-group-title", text: label }));
+      groupItems.forEach((item) => list.appendChild(renderRecurringItem(item)));
+    });
+  }
+
+  function renderRecurringItem(item) {
+    const status = recurringStatus(item, activeMonth);
+    const amount = money(item.amount);
+    return el("article", { class: "recurring-item recurring-item--" + status.toLowerCase() }, [
+      el("div", { class: "recurring-item__main" }, [
+        el("strong", { text: item.name || "Recurring item" }),
+        el("span", { text: `${amount} · ${item.frequency === "one-off" ? "One-off" : "Monthly"} · Starts ${monthLabel(item.start)}` + (item.end ? ` · Ends ${monthLabel(item.end)}` : "") }),
+        item.day ? el("span", { text: `Payment day ${Math.min(num(item.day), 31)}` }) : null,
+        item.note ? el("span", { text: item.note }) : null,
+      ].filter(Boolean)),
+      el("div", { class: "recurring-item__meta" }, [
+        el("span", { class: "status-pill", text: status }),
+        el("span", { text: `Next: ${nextEligibleMonth(item)}` }),
+      ]),
+      el("div", { class: "recurring-item__actions" }, [
+        el("button", { class: "btn btn--sm", type: "button", onclick: () => toggleRecurring(item) }, [item.status === "paused" ? "Resume" : "Pause"]),
+        el("button", { class: "btn btn--sm", type: "button", onclick: () => loadRecurringForEdit(item) }, ["Edit"]),
+        el("button", {
+          class: "btn btn--sm btn--danger",
+          type: "button",
+          onclick: () => openConfirm(`Delete ${item.name || "this recurring item"}?`, "Future copies will stop. Existing monthly records will remain unchanged.", "Delete", () => {
+            const record = activeRecord();
+            record.recurringItems = (record.recurringItems || []).filter((x) => x.id !== item.id);
+            saveRoot();
+            renderRecurring();
+            notify("Recurring item deleted");
+          }),
+        }, ["Delete"]),
+      ]),
+    ]);
+  }
+
+  function recurringValidation(item, existingId) {
+    if (!cleanName(item.name)) return "Recurring item name is required.";
+    const amountMsg = decimalValidation(String(item.amount), "Amount");
+    if (amountMsg) return amountMsg;
+    if (!["income", "expense", "savings", "sinking", "debt"].includes(item.type)) return "Choose a valid recurring type.";
+    if (!["monthly", "one-off"].includes(item.frequency)) return "Choose a valid recurrence type.";
+    const startMsg = monthValidation(item.start, "Start month", { allowPast: true });
+    if (startMsg) return startMsg;
+    if (item.end) {
+      const endMsg = monthValidation(item.end, "End month", { allowPast: true });
+      if (endMsg) return endMsg;
+      if (item.end < item.start) return "End month cannot be before the start month.";
+    }
+    if (item.day && (num(item.day) < 1 || num(item.day) > 31)) return "Payment day must be between 1 and 31.";
+    const record = activeRecord();
+    const duplicate = (record.recurringItems || []).some((existing) =>
+      existing.id !== existingId &&
+      existing.type === item.type &&
+      cleanName(existing.name).toLowerCase() === cleanName(item.name).toLowerCase() &&
+      existing.frequency === item.frequency &&
+      existing.start === item.start
+    );
+    return duplicate ? "A matching recurring item already exists." : "";
+  }
+
+  function recurringFormData() {
+    return {
+      type: document.getElementById("recurringType").value,
+      name: cleanName(document.getElementById("recurringName").value),
+      amount: Number(document.getElementById("recurringAmount").value),
+      frequency: document.getElementById("recurringFrequency").value,
+      start: document.getElementById("recurringStart").value,
+      end: document.getElementById("recurringEnd").value,
+      day: document.getElementById("recurringDay").value,
+      note: cleanName(document.getElementById("recurringNote").value),
+      status: "active",
+    };
+  }
+
+  function resetRecurringForm() {
+    const form = document.getElementById("recurringForm");
+    if (!form) return;
+    form.dataset.editing = "";
+    form.reset();
+    document.getElementById("recurringStart").value = activeMonth || currentMonthId();
+    document.querySelector("#recurringForm button[type='submit']").textContent = "Add recurring item";
+  }
+
+  function loadRecurringForEdit(item) {
+    document.getElementById("recurringType").value = item.type;
+    document.getElementById("recurringName").value = item.name || "";
+    document.getElementById("recurringAmount").value = item.amount || "";
+    document.getElementById("recurringFrequency").value = item.frequency || "monthly";
+    document.getElementById("recurringStart").value = item.start || activeMonth || currentMonthId();
+    document.getElementById("recurringEnd").value = item.end || "";
+    document.getElementById("recurringDay").value = item.day || "";
+    document.getElementById("recurringNote").value = item.note || "";
+    document.getElementById("recurringForm").dataset.editing = item.id;
+    document.querySelector("#recurringForm button[type='submit']").textContent = "Save recurring item";
+    scrollToSection("recurringSection", "#recurringName");
+  }
+
+  function saveRecurringFromForm(e) {
+    e.preventDefault();
+    const form = document.getElementById("recurringForm");
+    const editing = form.dataset.editing || "";
+    const item = recurringFormData();
+    const message = recurringValidation(item, editing);
+    const nameInput = document.getElementById("recurringName");
+    setFieldError(nameInput, message);
+    if (message) return;
+    const record = activeRecord();
+    if (editing) {
+      const existing = (record.recurringItems || []).find((x) => x.id === editing);
+      if (existing) Object.assign(existing, item, { updatedAt: new Date().toISOString() });
+      notify("Recurring item updated");
+    } else {
+      record.recurringItems = record.recurringItems || [];
+      record.recurringItems.push(Object.assign({ id: uid(), createdAt: new Date().toISOString() }, item));
+      notify("Recurring item added");
+    }
+    saveRoot();
+    resetRecurringForm();
+    renderRecurring();
+  }
+
+  function toggleRecurring(item) {
+    item.status = item.status === "paused" ? "active" : "paused";
+    item.updatedAt = new Date().toISOString();
+    saveRoot();
+    renderRecurring();
+    notify(item.status === "paused" ? "Recurring item paused" : "Recurring item resumed");
+  }
+
+  function openRollover(mode, targetMonth) {
+    const record = activeRecord();
+    if (!record) return;
+    const target = validMonthId(targetMonth) ? targetMonth : monthIdFromOffset(activeMonth, 1);
+    const existing = record.months[target];
+    const previousId = monthIdFromOffset(target, -1);
+    const previous = record.months[previousId];
+    const recurringCount = eligibleRecurringItems(target).length;
+    const canCopy = Boolean(previous);
+    const options = document.getElementById("rolloverOptions");
+    options.textContent = "";
+    document.getElementById("rolloverTitle").textContent = mode === "copy" ? `Copy into ${monthLabel(target)}` : `Create ${monthLabel(target)} budget`;
+    document.getElementById("rolloverBody").textContent = existing && monthHasPlan(existing)
+      ? "This month already contains budget data. Choose whether to merge missing planned items or replace planned data. Actual transactions will not be copied."
+      : "Review what should be copied before this month is created. Actual transactions and previous actual spending will not be copied.";
+    [
+      ["recurring", `Apply ${recurringCount} eligible recurring item${recurringCount === 1 ? "" : "s"}`, recurringCount > 0 && mode !== "copy"],
+      ["previous", canCopy ? `Copy planned data from ${monthLabel(previousId)}` : "There is no previous monthly plan available to copy.", canCopy && mode === "copy"],
+      ["replace", "Replace planned data in the target month", false],
+    ].forEach(([id, label, checked]) => {
+      const disabled = (id === "previous" && !canCopy) || (id === "recurring" && recurringCount === 0);
+      options.appendChild(el("label", { class: "rollover-choice" }, [
+        el("input", { type: "checkbox", value: id, checked: checked ? "true" : null, disabled: disabled ? "true" : null }),
+        el("span", { text: label }),
+      ]));
+    });
+    document.getElementById("rolloverModal").dataset.targetMonth = target;
+    document.getElementById("rolloverModal").hidden = false;
+    document.getElementById("rolloverCancelBtn").focus();
+  }
+
+  function closeRollover() {
+    document.getElementById("rolloverModal").hidden = true;
+  }
+
+  function confirmRollover() {
+    const modal = document.getElementById("rolloverModal");
+    const targetId = modal.dataset.targetMonth;
+    const record = activeRecord();
+    if (!validMonthId(targetId) || !record) return;
+    save();
+    if (!record.months[targetId]) {
+      record.months[targetId] = blankMonthFor(activeProfile, targetId, state);
+      record.months[targetId].history = record.history || [];
+    }
+    const target = record.months[targetId];
+    const selected = Array.from(document.querySelectorAll("#rolloverOptions input:checked")).map((i) => i.value);
+    const replace = selected.includes("replace");
+    if (selected.includes("previous")) {
+      const previous = record.months[monthIdFromOffset(targetId, -1)];
+      if (previous) copyPlannedFrom(previous, target, replace ? "replace" : "merge");
+    }
+    let recurringAdded = 0;
+    if (selected.includes("recurring")) recurringAdded = applyRecurringToMonth(target, targetId);
+    target.status = "draft";
+    target.updatedAt = new Date().toISOString();
+    activeMonth = targetId;
+    record.activeMonth = targetId;
+    record.state = target;
+    state = target;
+    save();
+    closeRollover();
+    renderAll();
+    notify(`${monthLabel(targetId)} budget ready${recurringAdded ? ` with ${recurringAdded} recurring item${recurringAdded === 1 ? "" : "s"}` : ""}`);
   }
 
   function meaningfulDataExists() {
@@ -547,7 +1050,7 @@
       { id: "savings", label: "Allocate money towards savings", done: state.savings.some((s) => cleanName(s.name) && num(s.budgeted) > 0), action: sectionAction("savingsSection", "input[aria-label='Budgeted']", "savings") },
       { id: "sinking", label: "Add an upcoming cost or sinking fund", done: state.sinkingFunds.some((f) => cleanName(f.name) && num(f.cost) > 0), action: sectionAction("sinkingSection", "input[aria-label='Total cost']", "sinking") },
       { id: "transaction", label: "Record the first transaction", done: state.transactions.some((tx) => num(tx.amount) > 0), action: sectionAction("transactionsSection", "input[aria-label='Amount']", "transactions") },
-      { id: "history", label: "Save the current month", done: state.history.length > 0, action: sectionAction("historySection", "#saveSnapshotBtn") },
+      { id: "history", label: "Save this budget month", done: state.history.some((h) => h.monthId === activeMonth), action: sectionAction("historySection", "#saveSnapshotBtn") },
     ];
   }
 
@@ -812,7 +1315,7 @@
     const totalOver = overCategories.reduce((acc, e) => acc + (e.actual - e.budgeted), 0);
     const totalUnder = Math.max(t.expBudgeted - t.expActual, 0);
     const mostTransactions = expenses.filter((e) => e.txCount > 0).sort((a, b) => b.txCount - a.txCount)[0];
-    const lastHistory = (state.history || []).length ? state.history[state.history.length - 1] : null;
+    const lastHistory = sortedHistory().filter((h) => h.monthId !== activeMonth).slice(-1)[0] || null;
 
     return { t, expenses, overCategories, underCategories, actualCategories, plannedCategories, totalOver, totalUnder, txCounts, uncategorisedTotal, mostTransactions, lastHistory };
   }
@@ -1429,10 +1932,14 @@
   }
 
   function sortedHistory() {
-    return (state.history || []).slice().sort((a, b) => historyTime(a.label) - historyTime(b.label));
+    return (state.history || []).slice().sort((a, b) => historyTime(a.monthId || a.label) - historyTime(b.monthId || b.label));
   }
 
   function historyTime(label) {
+    if (validMonthId(label)) {
+      const [y, m] = label.split("-").map((x) => parseInt(x, 10));
+      return new Date(y, m - 1, 1).getTime();
+    }
     const d = new Date("1 " + label);
     return Number.isNaN(d.getTime()) ? 0 : d.getTime();
   }
@@ -2314,7 +2821,7 @@
       empty.style.display = "none";
     }
 
-    state.history.forEach((h) => {
+    sortedHistory().forEach((h) => {
       const del = el("button", {
         class: "btn btn--icon", type: "button", title: "Delete snapshot", "aria-label": "Delete snapshot",
         onclick: () => {
@@ -2340,7 +2847,7 @@
   function renderHistoryChart() {
     const wrap = document.getElementById("historyChart");
     wrap.textContent = "";
-    const data = state.history;
+    const data = sortedHistory();
     if (data.length < 2) {
       wrap.appendChild(el("p", { class: "empty-hint", text: data.length === 1 ? "Save another month to see the trend line." : "" }));
       return;
@@ -2422,29 +2929,47 @@
     renderOnboarding();
   }
 
-  function saveSnapshot() {
+  function saveSnapshot(statusOverride) {
     const t = totals();
-    const label = new Date().toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+    const label = monthLabel(activeMonth, { month: "short", year: "numeric" });
+    const status = statusOverride || "saved";
     const snap = {
-      id: uid(), label,
+      id: uid(), monthId: activeMonth, label,
       income: t.income, tithe: t.tithe, expenses: t.expActual, savings: t.savActual, leftover: t.leftover,
+      plannedCommitments: t.plannedCommitments,
+      status,
+      savedAt: new Date().toISOString(),
     };
-    // Replace an existing snapshot with the same label (same month) rather than duplicating.
-    const existing = state.history.findIndex((h) => h.label === label);
+    const existing = state.history.findIndex((h) => (h.monthId || h.label) === activeMonth || h.label === label);
     if (existing >= 0) state.history[existing] = snap;
     else state.history.push(snap);
+    state.status = status;
     save();
     renderHistory();
     renderOnboarding();
     renderInsights();
     renderAnalytics();
-    notify("Budget snapshot saved");
+    renderMonthPanel();
+    notify(status === "completed" ? "Month completed" : "Budget snapshot saved");
+  }
+
+  function completeMonth() {
+    openConfirm(`Complete ${monthLabel(activeMonth)}?`, "This saves the month into history and marks it completed. You can still return to the month later to correct mistakes, but changes may alter comparisons.", "Complete month", () => {
+      saveSnapshot("completed");
+    });
   }
 
   function resetAll() {
     openConfirm(`Reset ${PROFILES[activeProfile].label}'s data?`, "This will restore this profile to the default budget and delete its current categories, goals, transactions, debts, sinking funds, and history.", "Reset", () => {
-      state = defaultsFor(activeProfile);
-      save();
+      const record = profileRecord(activeProfile);
+      activeMonth = currentMonthId();
+      state = normaliseMonthlyState(Object.assign(defaultsFor(activeProfile), { monthId: activeMonth, history: [] }), activeProfile, activeMonth, []);
+      record.months = { [activeMonth]: state };
+      record.activeMonth = activeMonth;
+      record.state = state;
+      record.history = state.history;
+      record.recurringItems = [];
+      saveRoot();
       renderAll();
       notify("Budget reset");
     });
@@ -2489,6 +3014,21 @@
     }
     state.monthlySavingsTarget = next; setFieldError(e.target, ""); save(); renderAdvisor(); renderSummary();
   });
+  document.getElementById("activeMonthInput").addEventListener("change", (e) => {
+    const message = monthValidation(e.target.value, "Budget month", { allowPast: true });
+    setFieldError(e.target, message);
+    if (message) return;
+    switchMonth(e.target.value);
+  });
+  document.getElementById("prevMonthBtn").addEventListener("click", () => switchMonth(monthIdFromOffset(activeMonth, -1)));
+  document.getElementById("nextMonthBtn").addEventListener("click", () => switchMonth(monthIdFromOffset(activeMonth, 1)));
+  document.getElementById("currentMonthBtn").addEventListener("click", () => switchMonth(currentMonthId()));
+  document.getElementById("startNextMonthBtn").addEventListener("click", () => openRollover("next", monthIdFromOffset(activeMonth, 1)));
+  document.getElementById("copyPreviousMonthBtn").addEventListener("click", () => openRollover("copy", activeMonth));
+  document.getElementById("recurringForm").addEventListener("submit", saveRecurringFromForm);
+  document.getElementById("rolloverCancelBtn").addEventListener("click", closeRollover);
+  document.getElementById("rolloverConfirmBtn").addEventListener("click", confirmRollover);
+  resetRecurringForm();
   [
     ["goalsSort", "goals", "sort", renderGoals],
     ["goalsFilter", "goals", "filter", renderGoals],
@@ -2546,7 +3086,8 @@
     body.hidden = nextHidden;
     toggle.setAttribute("aria-expanded", String(!nextHidden));
   });
-  document.getElementById("saveSnapshotBtn").addEventListener("click", saveSnapshot);
+  document.getElementById("saveSnapshotBtn").addEventListener("click", () => saveSnapshot());
+  document.getElementById("completeMonthBtn").addEventListener("click", completeMonth);
   document.getElementById("resetBtn").addEventListener("click", resetAll);
   document.getElementById("authForm").addEventListener("submit", submitLogin);
   document.getElementById("authBackBtn").addEventListener("click", () => {
@@ -2559,12 +3100,14 @@
   document.getElementById("profileSwitchBtn").addEventListener("click", () => {
     sessionStorage.removeItem(SESSION_PROFILE_KEY);
     activeProfile = "";
+    activeMonth = "";
     state = null;
     showAuth();
   });
   document.getElementById("lockBtn").addEventListener("click", () => {
     sessionStorage.removeItem(SESSION_PROFILE_KEY);
     activeProfile = "";
+    activeMonth = "";
     state = null;
     showAuth();
   });
