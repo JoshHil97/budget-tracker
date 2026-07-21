@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0f766e" />
+  <title>Budget &amp; Savings Goals</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%92%B7%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-header__inner">
+      <h1 class="app-title">💷 Budget &amp; Savings</h1>
+      <button id="resetBtn" class="btn btn--ghost" type="button">Reset all data</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Income -->
+    <section class="card" id="incomeSection">
+      <div class="card__head">
+        <h2>Income</h2>
+      </div>
+      <label class="field field--stack">
+        <span class="field__label">Monthly take-home pay</span>
+        <span class="input-money">
+          <span class="input-money__symbol">£</span>
+          <input id="incomeInput" class="input input--money editable" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" />
+        </span>
+      </label>
+    </section>
+
+    <!-- Expenses -->
+    <section class="card" id="expensesSection">
+      <div class="card__head">
+        <h2>Expenses</h2>
+        <button class="btn btn--sm" data-add="expenses" type="button">+ Add category</button>
+      </div>
+      <div class="table-wrap">
+        <table class="alloc-table">
+          <thead>
+            <tr>
+              <th class="col-name">Category</th>
+              <th class="col-num">Budgeted</th>
+              <th class="col-num">Actual</th>
+              <th class="col-num">Diff</th>
+              <th class="col-act" aria-label="actions"></th>
+            </tr>
+          </thead>
+          <tbody id="expensesBody"></tbody>
+          <tfoot>
+            <tr class="totals-row">
+              <td>Total</td>
+              <td class="col-num" id="expBudgetedTotal">£0.00</td>
+              <td class="col-num" id="expActualTotal">£0.00</td>
+              <td class="col-num" id="expDiffTotal">£0.00</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+
+    <!-- Savings allocation -->
+    <section class="card" id="savingsSection">
+      <div class="card__head">
+        <h2>Savings allocation</h2>
+        <button class="btn btn--sm" data-add="savings" type="button">+ Add category</button>
+      </div>
+      <div class="table-wrap">
+        <table class="alloc-table">
+          <thead>
+            <tr>
+              <th class="col-name">Category</th>
+              <th class="col-num">Budgeted</th>
+              <th class="col-num">Actual</th>
+              <th class="col-act" aria-label="actions"></th>
+            </tr>
+          </thead>
+          <tbody id="savingsBody"></tbody>
+          <tfoot>
+            <tr class="totals-row">
+              <td>Total</td>
+              <td class="col-num" id="savBudgetedTotal">£0.00</td>
+              <td class="col-num" id="savActualTotal">£0.00</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+
+    <!-- Summary dashboard -->
+    <section class="card" id="summarySection">
+      <div class="card__head"><h2>Summary</h2></div>
+      <div class="summary-grid">
+        <div class="stat">
+          <span class="stat__label">Income</span>
+          <span class="stat__value" id="sumIncome">£0.00</span>
+        </div>
+        <div class="stat">
+          <span class="stat__label">Expenses (actual)</span>
+          <span class="stat__value" id="sumExpenses">£0.00</span>
+        </div>
+        <div class="stat">
+          <span class="stat__label">Savings (actual)</span>
+          <span class="stat__value" id="sumSavings">£0.00</span>
+        </div>
+        <div class="stat stat--leftover" id="leftoverStat">
+          <span class="stat__label">Left over (unallocated)</span>
+          <span class="stat__value" id="sumLeftover">£0.00</span>
+        </div>
+      </div>
+      <div class="chart-block">
+        <h3 class="chart-title">Where the money went</h3>
+        <div class="chart-flex">
+          <div id="breakdownChart" class="donut-wrap" aria-hidden="true"></div>
+          <ul id="breakdownLegend" class="legend"></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- Savings goals tracker -->
+    <section class="card" id="goalsSection">
+      <div class="card__head">
+        <h2>Savings goals</h2>
+        <button class="btn btn--sm" data-add="goals" type="button">+ Add goal</button>
+      </div>
+      <div id="goalsList" class="goals-list"></div>
+    </section>
+
+    <!-- Debt payoff tracker -->
+    <section class="card" id="debtSection">
+      <div class="card__head">
+        <h2>Debt payoff</h2>
+        <button class="btn btn--sm" data-add="debts" type="button">+ Add debt</button>
+      </div>
+      <div class="table-wrap">
+        <table class="alloc-table debt-table">
+          <thead>
+            <tr>
+              <th class="col-name">Debt</th>
+              <th class="col-num">Balance</th>
+              <th class="col-num">APR %</th>
+              <th class="col-num">Monthly</th>
+              <th class="col-num">Payoff</th>
+              <th class="col-act" aria-label="actions"></th>
+            </tr>
+          </thead>
+          <tbody id="debtBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Monthly history -->
+    <section class="card" id="historySection">
+      <div class="card__head">
+        <h2>Monthly history</h2>
+        <button id="saveSnapshotBtn" class="btn btn--sm btn--primary" type="button">Save this month</button>
+      </div>
+      <div class="chart-block">
+        <div id="historyChart" class="line-chart"></div>
+        <ul class="legend legend--inline">
+          <li><span class="legend__swatch" style="background:var(--c-income)"></span>Income</li>
+          <li><span class="legend__swatch" style="background:var(--c-expense)"></span>Expenses</li>
+          <li><span class="legend__swatch" style="background:var(--c-savings)"></span>Savings</li>
+        </ul>
+      </div>
+      <div class="table-wrap">
+        <table class="alloc-table">
+          <thead>
+            <tr>
+              <th class="col-name">Month</th>
+              <th class="col-num">Income</th>
+              <th class="col-num">Expenses</th>
+              <th class="col-num">Savings</th>
+              <th class="col-num">Left over</th>
+              <th class="col-act" aria-label="actions"></th>
+            </tr>
+          </thead>
+          <tbody id="historyBody"></tbody>
+        </table>
+      </div>
+      <p class="empty-hint" id="historyEmpty">No snapshots yet — hit “Save this month” to start tracking trends.</p>
+    </section>
+  </main>
+
+  <!-- Sticky summary bar (mobile) -->
+  <div class="sticky-bar" id="stickyBar">
+    <div class="sticky-bar__item">
+      <span class="sticky-bar__label">Left over</span>
+      <span class="sticky-bar__value" id="stickyLeftover">£0.00</span>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
