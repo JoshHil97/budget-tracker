@@ -311,6 +311,7 @@
     goals: { sort: "completion", filter: "active" },
     sinking: { sort: "target", filter: "active" },
     debts: { sort: "balance", filter: "active" },
+    analytics: { view: "spending", budgetSort: "actual", savingsFilter: "active", showZeroSpend: false },
   };
 
   function defaultsFor(profileId) {
@@ -526,6 +527,7 @@
     renderAdvisor();
     renderTransactions();
     renderMoneyTrail();
+    renderAnalytics();
     renderScripture();
   }
 
@@ -747,6 +749,7 @@
     renderInsights(t);
     renderMoneyTrail();
     renderAdvisor();
+    renderAnalytics(t);
   }
 
   function renderGuidance(totalsArg) {
@@ -1088,6 +1091,360 @@
     });
   }
 
+  function renderAnalytics(totalsArg) {
+    const panel = document.getElementById("analyticsPanel");
+    if (!panel || !state) return;
+    panel.textContent = "";
+    const view = viewPrefs.analytics.view;
+    document.querySelectorAll(".analytics-tab").forEach((btn) => {
+      const active = btn.dataset.chartView === view;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-selected", String(active));
+      btn.setAttribute("tabindex", active ? "0" : "-1");
+    });
+    analyticsConfigs(view, totalsArg).forEach((config) => {
+      try {
+        panel.appendChild(renderChartCard(config));
+      } catch (err) {
+        console.error("Unable to render analytics card", config && config.title, err);
+        panel.appendChild(el("div", { class: "chart-card" }, [
+          el("div", { class: "analytics-card__head" }, [
+            el("div", {}, [
+              el("h4", { text: config && config.title ? config.title : "Analytics" }),
+              el("p", { text: "This chart could not be displayed." }),
+            ]),
+          ]),
+          emptyState("Chart unavailable", "The rest of your budget is still working. Try editing the related values or refreshing the page."),
+        ]));
+      }
+    });
+  }
+
+  function analyticsConfigs(view, totalsArg) {
+    if (view === "budget") return [budgetAnalyticsConfig(), cashFlowAnalyticsConfig(totalsArg)];
+    if (view === "savings") return [savingsAnalyticsConfig()];
+    if (view === "debt") return [debtAnalyticsConfig()];
+    if (view === "trends") return [trendsAnalyticsConfig()];
+    return [spendingAnalyticsConfig(totalsArg)];
+  }
+
+  function renderChartCard(config) {
+    const children = [
+      el("div", { class: "analytics-card__head" }, [
+        el("div", {}, [
+          el("h4", { text: config.title }),
+          el("p", { text: config.description }),
+        ]),
+        config.controls || null,
+      ].filter(Boolean)),
+    ];
+    if (config.empty) {
+      children.push(emptyState(config.empty.title, config.empty.description, config.empty.actionText, config.empty.action));
+      return el("div", { class: "chart-card" }, children.filter(Boolean));
+    }
+    children.push(el("p", { class: "chart-summary", text: config.summary }));
+    children.push(config.visual);
+    children.push(renderDataTable(config.columns, config.rows));
+    return el("div", { class: "chart-card" }, children.filter(Boolean));
+  }
+
+  function renderDataTable(columns, rows) {
+    const table = el("table", { class: "alloc-table analytics-table" }, [
+      el("thead", {}, [el("tr", {}, columns.map((c) => el("th", { class: c.numeric ? "col-num" : "col-name", text: c.label })))]),
+      el("tbody", {}, rows.map((row) => el("tr", {}, columns.map((c) => el("td", {
+        class: c.numeric ? "col-num cell-calc" : "col-name",
+        "data-label": c.label,
+        text: row[c.key],
+      }))))),
+    ]);
+    return el("div", { class: "table-wrap" }, [table]);
+  }
+
+  function barChart(rows, opts) {
+    const options = Object.assign({ valueKey: "value", max: null, tone: "primary" }, opts || {});
+    const max = options.max || Math.max(1, ...rows.map((r) => num(r[options.valueKey])));
+    return el("div", { class: "bar-chart bar-chart--" + options.tone }, rows.map((row) => {
+      const value = Math.max(num(row[options.valueKey]), 0);
+      const width = max > 0 ? Math.min((value / max) * 100, 100) : 0;
+      const detail = row.detail || row.valueLabel || money(value);
+      return el("div", { class: "bar-row", tabindex: "0", title: `${row.label}: ${detail}`, "aria-label": `${row.label}: ${detail}` }, [
+        el("div", { class: "bar-row__top" }, [
+          el("span", { class: "bar-row__label", text: row.label }),
+          el("span", { class: "bar-row__value", text: detail }),
+        ]),
+        el("div", { class: "bar-row__track" }, [el("span", { style: `width:${width}%` })]),
+      ]);
+    }));
+  }
+
+  function groupedBudgetChart(rows) {
+    const max = Math.max(1, ...rows.map((r) => Math.max(r.planned, r.actual)));
+    return el("div", { class: "bar-chart bar-chart--grouped" }, rows.map((row) => {
+      const plannedWidth = Math.min((row.planned / max) * 100, 100);
+      const actualWidth = Math.min((row.actual / max) * 100, 100);
+      return el("div", { class: "bar-row", tabindex: "0", title: `${row.label}: planned ${money(row.planned)}, actual ${money(row.actual)}`, "aria-label": `${row.label}: planned ${money(row.planned)}, actual ${money(row.actual)}, ${row.status}` }, [
+        el("div", { class: "bar-row__top" }, [
+          el("span", { class: "bar-row__label", text: row.label }),
+          el("span", { class: row.diff < 0 ? "bar-row__value neg" : "bar-row__value pos", text: row.status }),
+        ]),
+        el("div", { class: "compare-bars" }, [
+          el("span", { class: "compare-bars__label", text: "Planned" }),
+          el("div", { class: "bar-row__track bar-row__track--planned" }, [el("span", { style: `width:${plannedWidth}%` })]),
+          el("span", { class: "compare-bars__label", text: "Actual" }),
+          el("div", { class: "bar-row__track" }, [el("span", { style: `width:${actualWidth}%` })]),
+        ]),
+      ]);
+    }));
+  }
+
+  function allocationChart(t) {
+    if (t.income <= CURRENCY_TOLERANCE) {
+      return { empty: { title: "No income yet", description: "Add monthly income to visualise how this month is allocated.", actionText: "Add income", action: sectionAction("incomeSection", "#incomeInput") } };
+    }
+    const debtPayments = (state.debts || []).reduce((acc, d) => acc + num(d.payment), 0);
+    const rows = [
+      { label: "Tithe / Offering", value: t.tithe },
+      { label: "Planned expenses", value: t.expBudgeted },
+      { label: "Savings allocations", value: t.savBudgeted },
+      { label: "Sinking funds", value: t.sinkingPlanned },
+      { label: "Debt payments", value: debtPayments },
+      { label: "Unallocated income", value: Math.max(t.unallocatedIncome, 0) },
+    ].filter((row) => row.value > CURRENCY_TOLERANCE);
+    const scaleBase = Math.max(t.income, rows.reduce((acc, row) => acc + row.value, 0), 1);
+    const over = Math.max(t.plannedCommitments + debtPayments - t.income, 0);
+    const summary = over > CURRENCY_TOLERANCE
+      ? `Planned commitments exceed income by ${money(over)}.`
+      : `${money(Math.max(t.unallocatedIncome, 0))} of income is not yet assigned.`;
+    return {
+      rows,
+      visual: el("div", { class: "allocation-chart", "aria-label": "Current month income allocation" }, rows.map((row) => {
+        const width = Math.max((row.value / scaleBase) * 100, 3);
+        return el("span", { style: `width:${Math.min(width, 100)}%`, title: `${row.label}: ${money(row.value)}` }, [
+          el("b", { text: row.label }),
+          el("small", { text: money(row.value) }),
+        ]);
+      })),
+      summary,
+    };
+  }
+
+  function cashFlowAnalyticsConfig(totalsArg) {
+    const t = totalsArg || totals();
+    const chart = allocationChart(t);
+    if (chart.empty) {
+      return { title: "Current-month cash flow", description: "How this month's income has been assigned.", empty: chart.empty };
+    }
+    const incomeBase = Math.max(t.income, 1);
+    const over = Math.max(t.plannedCommitments + (state.debts || []).reduce((acc, d) => acc + num(d.payment), 0) - t.income, 0);
+    const rows = chart.rows.map((row) => ({
+      allocation: row.label,
+      amount: money(row.value),
+      share: row.value > CURRENCY_TOLERANCE ? `${pct((row.value / incomeBase) * 100)} of income` : "0% of income",
+    }));
+    if (over > CURRENCY_TOLERANCE) {
+      rows.push({ allocation: "Over-allocation", amount: money(over), share: "Above income" });
+    }
+    return {
+      title: "Current-month cash flow",
+      description: "How this month's income has been assigned.",
+      summary: chart.summary,
+      visual: chart.visual,
+      columns: [{ key: "allocation", label: "Allocation" }, { key: "amount", label: "Amount", numeric: true }, { key: "share", label: "Share" }],
+      rows,
+    };
+  }
+
+  function spendingAnalyticsConfig(totalsArg) {
+    const ctx = insightContext(totalsArg);
+    const total = ctx.t.expActual + ctx.uncategorisedTotal;
+    const expenseRows = (viewPrefs.analytics.showZeroSpend ? ctx.expenses : ctx.actualCategories)
+      .map((row) => ({ label: row.name, value: row.actual }));
+    const rows = expenseRows
+      .concat(ctx.uncategorisedTotal > CURRENCY_TOLERANCE ? [{ label: "Uncategorised", value: ctx.uncategorisedTotal }] : [])
+      .filter((row) => viewPrefs.analytics.showZeroSpend || row.value > CURRENCY_TOLERANCE)
+      .sort((a, b) => b.value - a.value);
+    const controls = el("label", { class: "chart-option" }, [
+      el("input", { type: "checkbox", checked: viewPrefs.analytics.showZeroSpend ? "true" : null, onchange: (e) => { viewPrefs.analytics.showZeroSpend = e.target.checked; renderAnalytics(); } }),
+      "Show zero values",
+    ]);
+    if (!rows.length || total <= CURRENCY_TOLERANCE) {
+      return { title: "Spending by category", description: "Actual spending for the current month.", controls, empty: { title: "No spending recorded", description: "Record spending to see where your money is going.", actionText: "Record spending", action: sectionAction("transactionsSection", "input[aria-label='Amount']", "transactions") } };
+    }
+    const top = rows[0];
+    return {
+      title: "Spending by category",
+      description: "Actual spending for the current month.",
+      controls,
+      summary: `${top.label} is the largest spending category at ${money(top.value)}, representing ${pct((top.value / total) * 100)} of recorded spending.`,
+      visual: barChart(rows.map((row) => ({ label: row.label, value: row.value, detail: `${money(row.value)} · ${pct((row.value / total) * 100)}` }))),
+      columns: [{ key: "category", label: "Category" }, { key: "actual", label: "Actual amount", numeric: true }, { key: "share", label: "Share", numeric: true }],
+      rows: rows.map((row) => ({ category: row.label, actual: money(row.value), share: pct((row.value / total) * 100) })),
+    };
+  }
+
+  function budgetAnalyticsConfig() {
+    const ctx = insightContext();
+    let rows = ctx.expenses.filter((row) => row.budgeted > CURRENCY_TOLERANCE || row.actual > CURRENCY_TOLERANCE).map((row) => {
+      const diff = row.budgeted - row.actual;
+      return {
+        label: row.name,
+        planned: row.budgeted,
+        actual: row.actual,
+        diff,
+        status: diff < -CURRENCY_TOLERANCE ? `${money(Math.abs(diff))} over budget` : diff > CURRENCY_TOLERANCE ? `${money(diff)} remaining` : "On budget",
+      };
+    });
+    const select = el("label", { class: "chart-select" }, [
+      "Sort",
+      el("select", { class: "input input--compact", onchange: (e) => { viewPrefs.analytics.budgetSort = e.target.value; renderAnalytics(); } }, [
+        el("option", { value: "actual", text: "Largest actual spend" }),
+        el("option", { value: "over", text: "Largest overspend" }),
+        el("option", { value: "name", text: "Category name" }),
+      ]),
+    ]);
+    select.querySelector("select").value = viewPrefs.analytics.budgetSort;
+    if (!rows.length) {
+      return { title: "Budget versus actual", description: "Compare category plans with recorded spending.", controls: select, empty: { title: "No budget comparison yet", description: "Add expense categories and record spending to compare your plan with actual costs.", actionText: "Add category", action: sectionAction("expensesSection", "input[aria-label='Category name']", "expenses") } };
+    }
+    if (viewPrefs.analytics.budgetSort === "over") rows.sort((a, b) => (a.diff - b.diff));
+    else if (viewPrefs.analytics.budgetSort === "name") rows.sort((a, b) => a.label.localeCompare(b.label));
+    else rows.sort((a, b) => b.actual - a.actual);
+    const totalDiff = rows.reduce((acc, row) => acc + row.diff, 0);
+    return {
+      title: "Budget versus actual",
+      description: "Compare category plans with recorded spending.",
+      controls: select,
+      summary: totalDiff < -CURRENCY_TOLERANCE ? `Actual spending is ${money(Math.abs(totalDiff))} above planned category totals.` : `Actual spending is ${money(totalDiff)} below planned category totals.`,
+      visual: groupedBudgetChart(rows),
+      columns: [{ key: "category", label: "Category" }, { key: "planned", label: "Planned", numeric: true }, { key: "actual", label: "Actual", numeric: true }, { key: "difference", label: "Difference", numeric: true }, { key: "status", label: "Status" }],
+      rows: rows.map((row) => ({ category: row.label, planned: money(row.planned), actual: money(row.actual), difference: money(Math.abs(row.diff)), status: row.status })),
+    };
+  }
+
+  function savingsAnalyticsConfig() {
+    const goals = (state.goals || []).filter((g) => {
+      const complete = goalCalc(g).complete;
+      if (viewPrefs.analytics.savingsFilter === "active") return !complete;
+      if (viewPrefs.analytics.savingsFilter === "completed") return complete;
+      return true;
+    });
+    const filter = el("label", { class: "chart-select" }, [
+      "Show",
+      el("select", { class: "input input--compact", onchange: (e) => { viewPrefs.analytics.savingsFilter = e.target.value; renderAnalytics(); } }, [
+        el("option", { value: "active", text: "Active" }),
+        el("option", { value: "completed", text: "Completed" }),
+        el("option", { value: "all", text: "All" }),
+      ]),
+    ]);
+    filter.querySelector("select").value = viewPrefs.analytics.savingsFilter;
+    if (!goals.length) {
+      return { title: "Savings progress", description: "Tracked savings-goal balances only.", controls: filter, empty: { title: "No savings goals to visualise", description: "Create a savings goal to visualise progress.", actionText: "Create goal", action: sectionAction("goalsSection", "input[aria-label='Goal name']", "goals") } };
+    }
+    const totalTarget = sum(goals, "target");
+    const totalSaved = sum(goals, "current");
+    const combined = progressData(totalSaved, totalTarget);
+    const rows = goals.map((g) => ({ label: g.name || "Savings goal", value: goalCalc(g).pct, saved: num(g.current), target: num(g.target) })).sort((a, b) => b.value - a.value);
+    return {
+      title: "Savings progress",
+      description: "Tracked savings-goal balances only.",
+      controls: filter,
+      summary: `${money(totalSaved)} of ${money(totalTarget)} is saved across tracked goals, ${combined.pct}% complete.`,
+      visual: el("div", { class: "chart-stack" }, [
+        progressComponent("saved", combined, `${money(combined.remaining)} remaining across tracked goals.`),
+        barChart(rows.map((row) => ({ label: row.label, value: row.value, detail: `${money(row.saved)} of ${money(row.target)} · ${row.value}%` })), { max: 100, tone: "progress" }),
+      ]),
+      columns: [{ key: "goal", label: "Goal" }, { key: "saved", label: "Saved", numeric: true }, { key: "target", label: "Target", numeric: true }, { key: "progress", label: "Progress", numeric: true }],
+      rows: rows.map((row) => ({ goal: row.label, saved: money(row.saved), target: money(row.target), progress: `${row.value}%` })),
+    };
+  }
+
+  function debtAnalyticsConfig() {
+    const debts = (state.debts || []);
+    const active = debts.filter((d) => num(d.balance) > CURRENCY_TOLERANCE).sort((a, b) => num(b.balance) - num(a.balance));
+    if (!debts.length) {
+      return { title: "Debt analytics", description: "Outstanding balances and repayment progress.", empty: { title: "No debts to visualise", description: "Add a debt to visualise outstanding balances.", actionText: "Add debt", action: sectionAction("debtSection", "input[aria-label='Debt name']", "debts") } };
+    }
+    const largest = active[0];
+    const rows = debts
+      .slice()
+      .sort((a, b) => num(b.balance) - num(a.balance))
+      .map((d) => ({ label: d.name || "Debt", value: num(d.balance), original: num(d.originalBalance), repaid: Math.max(num(d.originalBalance) - num(d.balance), 0), pctPaid: num(d.originalBalance) > 0 ? progressData(num(d.originalBalance) - num(d.balance), num(d.originalBalance)).pct : null }));
+    const activeRows = rows.filter((row) => row.value > CURRENCY_TOLERANCE);
+    return {
+      title: "Debt analytics",
+      description: "Outstanding balances and repayment progress.",
+      summary: largest ? `Your largest recorded debt balance is ${money(num(largest.balance))} on ${largest.name || "a debt"}.` : "All tracked debts are currently cleared.",
+      visual: el("div", { class: "chart-stack" }, [
+        activeRows.length ? barChart(activeRows.map((row) => ({ label: row.label, value: row.value, detail: money(row.value) })), { tone: "debt" }) : el("p", { class: "empty-hint", text: "No active debt balances remain." }),
+        rows.some((row) => row.pctPaid != null) ? barChart(rows.filter((row) => row.pctPaid != null).map((row) => ({ label: row.label, value: row.pctPaid, detail: `${money(row.repaid)} repaid · ${row.pctPaid}%` })), { max: 100, tone: "progress" }) : el("p", { class: "empty-hint", text: "Original balance required for repayment progress. Save monthly debt balances to unlock debt reduction trends." }),
+      ]),
+      columns: [{ key: "debt", label: "Debt" }, { key: "balance", label: "Current balance", numeric: true }, { key: "original", label: "Original balance", numeric: true }, { key: "repaid", label: "Repaid", numeric: true }, { key: "progress", label: "Progress" }],
+      rows: rows.map((row) => ({ debt: row.label, balance: money(row.value), original: row.original > 0 ? money(row.original) : "Not entered", repaid: row.original > 0 ? money(row.repaid) : "—", progress: row.pctPaid == null ? "Original balance required" : `${row.pctPaid}% repaid` })),
+    };
+  }
+
+  function trendsAnalyticsConfig() {
+    const rows = sortedHistory().slice(-12);
+    if (!rows.length) {
+      return { title: "Monthly trends", description: "Saved monthly income, spending and savings.", empty: { title: "No saved months yet", description: "Save completed months to build a spending trend.", actionText: "Save current month", action: sectionAction("historySection", "#saveSnapshotBtn") } };
+    }
+    if (rows.length === 1) {
+      return {
+        title: "Monthly trends",
+        description: "Saved monthly income, spending and savings.",
+        summary: `${rows[0].label} has ${money(rows[0].expenses)} of actual spending saved. Save another month to unlock trends.`,
+        visual: barChart([{ label: rows[0].label, value: num(rows[0].expenses), detail: money(rows[0].expenses) }], { tone: "trend" }),
+        columns: trendColumns(),
+        rows: trendRows(rows),
+      };
+    }
+    const latest = rows[rows.length - 1];
+    const previous = rows[rows.length - 2];
+    const diff = num(latest.expenses) - num(previous.expenses);
+    const max = Math.max(1, ...rows.map((r) => Math.max(num(r.income), num(r.expenses))));
+    return {
+      title: "Monthly trends",
+      description: "Saved monthly income, spending and savings.",
+      summary: diff > CURRENCY_TOLERANCE ? `Actual spending increased by ${money(diff)} compared with the previous saved month.` : `Actual spending decreased by ${money(Math.abs(diff))} compared with the previous saved month.`,
+      visual: el("div", { class: "bar-chart bar-chart--grouped" }, rows.map((row) => {
+        const incomeW = Math.min((num(row.income) / max) * 100, 100);
+        const spendW = Math.min((num(row.expenses) / max) * 100, 100);
+        const over = num(row.expenses) - num(row.income);
+        return el("div", { class: "bar-row", tabindex: "0", "aria-label": `${row.label}: income ${money(row.income)}, actual spending ${money(row.expenses)}` }, [
+          el("div", { class: "bar-row__top" }, [
+            el("span", { class: "bar-row__label", text: row.label }),
+            el("span", { class: over > CURRENCY_TOLERANCE ? "bar-row__value neg" : "bar-row__value", text: over > CURRENCY_TOLERANCE ? `${money(over)} over income` : money(num(row.income) - num(row.expenses)) + " difference" }),
+          ]),
+          el("div", { class: "compare-bars" }, [
+            el("span", { class: "compare-bars__label", text: "Income" }),
+            el("div", { class: "bar-row__track bar-row__track--planned" }, [el("span", { style: `width:${incomeW}%` })]),
+            el("span", { class: "compare-bars__label", text: "Spending" }),
+            el("div", { class: "bar-row__track" }, [el("span", { style: `width:${spendW}%` })]),
+          ]),
+        ]);
+      })),
+      columns: trendColumns(),
+      rows: trendRows(rows),
+    };
+  }
+
+  function sortedHistory() {
+    return (state.history || []).slice().sort((a, b) => historyTime(a.label) - historyTime(b.label));
+  }
+
+  function historyTime(label) {
+    const d = new Date("1 " + label);
+    return Number.isNaN(d.getTime()) ? 0 : d.getTime();
+  }
+
+  function trendColumns() {
+    return [{ key: "month", label: "Month" }, { key: "income", label: "Income", numeric: true }, { key: "spending", label: "Actual spending", numeric: true }, { key: "savings", label: "Monthly savings allocated", numeric: true }, { key: "difference", label: "Difference", numeric: true }];
+  }
+
+  function trendRows(rows) {
+    return rows.map((row) => ({ month: row.label, income: money(row.income), spending: money(row.expenses), savings: money(row.savings), difference: money(num(row.income) - num(row.expenses)) }));
+  }
+
   /* ---------- Donut chart: expenses vs each savings category ---------- */
   function renderBreakdownChart(t) {
     const palette = ["#b91c1c", "#9a6b4f", "#b88733", "#7a3f52", "#0e7490", "#b45309", "#6f4e37", "#4d7c0f", "#c08457"];
@@ -1333,6 +1690,7 @@
       class: "goal__name editable", type: "text", value: g.name, "aria-label": "Goal name",
       oninput: (e) => {
         commitName(e.target, state.goals, g, "Savings goal", () => { renderInsights(); renderAdvisor(); });
+        renderAnalytics();
       },
     });
     const del = el("button", {
@@ -1340,7 +1698,7 @@
       onclick: () => {
         openConfirm(`Delete the ${g.name || "savings"} goal?`, "This removes the tracked savings goal, its target, current saved amount, monthly contribution, and progress calculation.", "Delete", () => {
           state.goals = state.goals.filter((x) => x.id !== g.id);
-          save(); renderGoals(); renderInsights(); renderAdvisor(); notify("Savings goal deleted");
+          save(); renderGoals(); renderInsights(); renderAdvisor(); renderAnalytics(); notify("Savings goal deleted");
         });
       },
     }, ["✕"]);
@@ -1556,6 +1914,7 @@
           renderDebtSummary(state.debts || []);
           renderInsights();
           renderAdvisor();
+          renderAnalytics();
           if (key === "balance" && num(d.balance) === 0) renderDebts();
         },
       }, opts.attrs));
@@ -1574,7 +1933,7 @@
       onclick: () => {
         openConfirm(`Delete the ${d.name || "debt"} debt record?`, "This removes the tracked debt record and payoff calculation. It does not alter historical transactions.", "Delete", () => {
           state.debts = state.debts.filter((x) => x.id !== d.id);
-          save(); renderDebts(); renderInsights(); renderAdvisor(); notify("Debt deleted");
+          save(); renderDebts(); renderInsights(); renderAdvisor(); renderAnalytics(); notify("Debt deleted");
         });
       },
     }, ["✕"]);
@@ -1646,6 +2005,7 @@
     const totalEl = document.getElementById("sinkingMonthlyTotal");
     if (totalEl) totalEl.textContent = money(state.sinkingFunds.reduce((tt, f) => tt + sinkingMonthly(f), 0));
     renderInsights();
+    renderAnalytics();
     if (refreshAdvisor) renderAdvisor();
   }
 
@@ -1749,7 +2109,7 @@
     const name = el("input", {
       class: "cell-input cell-input--name editable", type: "text", value: f.name,
       placeholder: "Car insurance", "aria-label": "Fund name",
-      oninput: (e) => { commitName(e.target, state.sinkingFunds, f, "Sinking fund"); },
+      oninput: (e) => { commitName(e.target, state.sinkingFunds, f, "Sinking fund", renderAnalytics); },
     });
     const cost = el("input", {
       class: "cell-input cell-input--num editable", type: "number", inputmode: "decimal",
@@ -1799,7 +2159,7 @@
       onclick: () => {
         openConfirm(`Delete the ${f.name || "sinking fund"} sinking fund?`, `This removes the tracked sinking-fund record and its ${money(sinkingMonthly(f))} monthly set-aside from planned commitments.`, "Delete", () => {
           state.sinkingFunds = state.sinkingFunds.filter((x) => x.id !== f.id);
-          save(); renderSinking(); renderSummary(); renderInsights(); notify("Sinking fund deleted");
+          save(); renderSinking(); renderSummary(); renderInsights(); renderAnalytics(); notify("Sinking fund deleted");
         });
       },
     }, ["✕"]);
@@ -1960,7 +2320,7 @@
         onclick: () => {
           openConfirm(`Delete ${h.label} snapshot?`, "This will remove this saved month from the history chart and trend table.", "Delete", () => {
             state.history = state.history.filter((x) => x.id !== h.id);
-            save(); renderHistory(); renderAdvisor(); notify("Snapshot deleted");
+            save(); renderHistory(); renderAdvisor(); renderAnalytics(); notify("Snapshot deleted");
           });
         },
       }, ["✕"]);
@@ -2042,10 +2402,10 @@
       notify(listKey === "expenses" ? "Expense added" : "Savings category added");
     } else if (listKey === "goals") {
       state.goals.push({ id: uid(), name: uniqueName(state.goals, "New goal"), target: 0, current: 0, monthly: 0 });
-      save(); renderGoals(); renderInsights(); notify("Savings goal added");
+      save(); renderGoals(); renderInsights(); renderAnalytics(); notify("Savings goal added");
     } else if (listKey === "debts") {
       state.debts.push({ id: uid(), name: uniqueName(state.debts, "New debt"), originalBalance: 0, balance: 0, apr: 0, payment: 0 });
-      save(); renderDebts(); renderInsights(); notify("Debt added");
+      save(); renderDebts(); renderInsights(); renderAnalytics(); notify("Debt added");
     } else if (listKey === "sinking") {
       state.sinkingFunds.push({ id: uid(), name: uniqueName(state.sinkingFunds, "New fund"), cost: 0, saved: 0, start: "", date: nextMonthISO() });
       save(); renderSinking(); renderSummary(); notify("Sinking fund added");
@@ -2077,6 +2437,7 @@
     renderHistory();
     renderOnboarding();
     renderInsights();
+    renderAnalytics();
     notify("Budget snapshot saved");
   }
 
@@ -2154,6 +2515,25 @@
       if (!target) return;
       e.preventDefault();
       scrollToSection(targetId, "h2");
+    });
+  });
+  document.querySelectorAll(".analytics-tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      viewPrefs.analytics.view = btn.dataset.chartView || "spending";
+      renderAnalytics();
+      btn.focus();
+    });
+    btn.addEventListener("keydown", (e) => {
+      const tabs = Array.from(document.querySelectorAll(".analytics-tab"));
+      const current = tabs.indexOf(e.currentTarget);
+      let next = current;
+      if (e.key === "ArrowRight") next = (current + 1) % tabs.length;
+      else if (e.key === "ArrowLeft") next = (current - 1 + tabs.length) % tabs.length;
+      else if (e.key === "Home") next = 0;
+      else if (e.key === "End") next = tabs.length - 1;
+      else return;
+      e.preventDefault();
+      tabs[next].click();
     });
   });
   document.getElementById("setupBudgetBtn").addEventListener("click", () => {
