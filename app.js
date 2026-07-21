@@ -46,8 +46,8 @@
     emergencyMonths: 3,
     monthlySavingsTarget: 0,
     sinkingFunds: [
-      { id: uid(), name: "Germany trip (hotel + spend)", cost: 580, saved: 0, date: nextMonthISO() },
-      { id: uid(), name: "Milan trip with Ayo", cost: 700, saved: 0, date: monthsAheadISO(2) },
+      { id: uid(), name: "Germany trip (hotel + spend)", cost: 580, saved: 0, start: "", date: nextMonthISO() },
+      { id: uid(), name: "Milan trip with Ayo (est.)", cost: 700, saved: 0, start: monthsAheadISO(1), date: monthsAheadISO(2) },
     ],
     history: [], // { id, label, income, tithe, expenses, savings, leftover }
   };
@@ -64,16 +64,17 @@
   }
   function nextMonthISO() { return monthsAheadISO(1); }
 
-  // Whole months from now until the 1st of a "YYYY-MM" month, floored at 1.
-  function monthsUntil(iso) {
-    if (!iso) return 1;
+  // Whole months from now to a "YYYY-MM" month (can be 0 or negative).
+  function monthsUntilRaw(iso) {
+    if (!iso) return 0;
     const parts = String(iso).split("-");
     const y = parseInt(parts[0], 10), m = parseInt(parts[1], 10);
-    if (!y || !m) return 1;
+    if (!y || !m) return 0;
     const now = new Date();
-    const months = (y - now.getFullYear()) * 12 + (m - 1 - now.getMonth());
-    return Math.max(months, 1);
+    return (y - now.getFullYear()) * 12 + (m - 1 - now.getMonth());
   }
+  // Same, floored at 1 (used to spread a cost over remaining months).
+  function monthsUntil(iso) { return Math.max(monthsUntilRaw(iso), 1); }
 
   function avg(list) { return list.length ? list.reduce((a, b) => a + b, 0) / list.length : 0; }
 
@@ -473,6 +474,9 @@
   /* ---------- Sinking funds (upcoming one-off costs) ---------- */
   function sinkingMonthly(f) {
     const remaining = Math.max(num(f.cost) - num(f.saved), 0);
+    if (remaining <= 0) return 0;
+    // If saving hasn't started yet (a future "from" month), nothing this month.
+    if (f.start && monthsUntilRaw(f.start) > 0) return 0;
     return remaining / monthsUntil(f.date);
   }
 
@@ -511,6 +515,10 @@
       min: "0", step: "0.01", value: f.saved || "", placeholder: "0.00", "aria-label": "Saved so far",
       oninput: (e) => { f.saved = num(e.target.value); onEdit(); },
     });
+    const start = el("input", {
+      class: "cell-input editable", type: "month", value: f.start || "", "aria-label": "Start saving from",
+      oninput: (e) => { f.start = e.target.value; onEdit(); },
+    });
     const date = el("input", {
       class: "cell-input editable", type: "month", value: f.date || "", "aria-label": "Needed by",
       oninput: (e) => { f.date = e.target.value; onEdit(); },
@@ -523,6 +531,7 @@
       el("td", { class: "col-name" }, [name]),
       el("td", { class: "col-num" }, [cost]),
       el("td", { class: "col-num" }, [saved]),
+      el("td", { class: "col-num" }, [start]),
       el("td", { class: "col-num" }, [date]),
       monthlyCell,
       el("td", { class: "col-act" }, [del]),
