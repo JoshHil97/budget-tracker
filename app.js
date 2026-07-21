@@ -20,7 +20,7 @@
       { name: "Cleaning", budgeted: 20 },
       { name: "Date night with Ayo (incl. transport)", budgeted: 150 },
       { name: "Spending on Ayo (buffer)", budgeted: 100 },
-      { name: "Personal allowance (to live by)", budgeted: 200 },
+      { name: "Personal allowance (to live by)", budgeted: 433 },
     ].map((e) => ({ id: uid(), name: e.name, budgeted: e.budgeted, actual: 0 })),
     savings: [
       { name: "Emergency / High-Yield pot", budgeted: 500 },
