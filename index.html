@@ -218,6 +218,24 @@
         </div>
         <button class="btn btn--sm" data-add="sinking" type="button">+ Add fund</button>
       </div>
+      <div class="section-summary" id="sinkingSummary"></div>
+      <div class="section-controls" aria-label="Sinking fund controls">
+        <label>Sort
+          <select id="sinkingSort" class="input input--compact">
+            <option value="target">Nearest target date</option>
+            <option value="status">Behind schedule first</option>
+            <option value="required">Highest required contribution</option>
+            <option value="name">Name</option>
+          </select>
+        </label>
+        <label>Show
+          <select id="sinkingFilter" class="input input--compact">
+            <option value="active">Active</option>
+            <option value="completed">Completed</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+      </div>
       <div class="table-wrap">
         <table class="alloc-table">
           <thead>
@@ -228,6 +246,7 @@
               <th class="col-num">From</th>
               <th class="col-num">By</th>
               <th class="col-num">/ month</th>
+              <th class="col-name">Status</th>
               <th class="col-act" aria-label="actions"></th>
             </tr>
           </thead>
@@ -237,6 +256,7 @@
               <td data-label="">Set aside / month</td>
               <td class="col-num" data-label="" colspan="4"></td>
               <td class="col-num" data-label="/ month" id="sinkingMonthlyTotal">£0.00</td>
+              <td data-label=""></td>
               <td data-label=""></td>
             </tr>
           </tfoot>
@@ -390,6 +410,24 @@
         </div>
         <button class="btn btn--sm" data-add="goals" type="button">+ Add goal</button>
       </div>
+      <div class="section-summary" id="goalsSummary"></div>
+      <div class="section-controls" aria-label="Savings goal controls">
+        <label>Sort
+          <select id="goalsSort" class="input input--compact">
+            <option value="completion">Nearest completion</option>
+            <option value="progress">Highest progress</option>
+            <option value="remaining">Largest remaining amount</option>
+            <option value="name">Name</option>
+          </select>
+        </label>
+        <label>Show
+          <select id="goalsFilter" class="input input--compact">
+            <option value="active">Active</option>
+            <option value="completed">Completed</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+      </div>
       <div id="goalsList" class="goals-list"></div>
     </section>
 
@@ -401,15 +439,35 @@
         </div>
         <button class="btn btn--sm" data-add="debts" type="button">+ Add debt</button>
       </div>
+      <div class="section-summary" id="debtSummary"></div>
+      <div class="section-controls" aria-label="Debt controls">
+        <label>Sort
+          <select id="debtSort" class="input input--compact">
+            <option value="balance">Highest balance</option>
+            <option value="apr">Highest recorded APR</option>
+            <option value="payoff">Nearest estimated payoff</option>
+            <option value="name">Name</option>
+          </select>
+        </label>
+        <label>Show
+          <select id="debtFilter" class="input input--compact">
+            <option value="active">Active</option>
+            <option value="completed">Cleared</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+      </div>
       <div class="table-wrap">
         <table class="alloc-table debt-table">
           <thead>
             <tr>
               <th class="col-name">Debt</th>
+              <th class="col-num">Original</th>
               <th class="col-num">Balance</th>
               <th class="col-num">APR %</th>
               <th class="col-num">Monthly</th>
               <th class="col-num">Payoff</th>
+              <th class="col-name">Progress</th>
               <th class="col-act" aria-label="actions"></th>
             </tr>
           </thead>

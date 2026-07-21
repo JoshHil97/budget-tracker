@@ -307,6 +307,11 @@
   let activeProfile = sessionStorage.getItem(SESSION_PROFILE_KEY) || "";
   let pendingProfile = "";
   let state = null;
+  const viewPrefs = {
+    goals: { sort: "completion", filter: "active" },
+    sinking: { sort: "target", filter: "active" },
+    debts: { sort: "balance", filter: "active" },
+  };
 
   function defaultsFor(profileId) {
     return structuredClone(profileId === "ayo" ? AYO_DEFAULT_STATE : DEFAULT_STATE);
@@ -454,6 +459,57 @@
     const unallocatedIncome = income - plannedCommitments;
     const safeToSpend = Math.max(Math.min(actualCashRemaining, unallocatedIncome), 0);
     return { income, tithe, expBudgeted, expActual, savBudgeted, savActual, sinkingPlanned, plannedCommitments, actualSpending, remainingBudget, actualCashRemaining, unallocatedIncome, safeToSpend, leftover: actualCashRemaining };
+  }
+
+  function clampPct(value) {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(100, Math.round(value)));
+  }
+
+  function progressData(current, target) {
+    const targetNum = num(target);
+    const currentNum = Math.max(num(current), 0);
+    const remaining = Math.max(targetNum - currentNum, 0);
+    const pctComplete = targetNum > 0 ? clampPct((currentNum / targetNum) * 100) : 0;
+    return { current: currentNum, target: targetNum, remaining, pct: pctComplete, complete: targetNum > 0 && currentNum + CURRENCY_TOLERANCE >= targetNum };
+  }
+
+  function progressComponent(label, progress, supportingText) {
+    const text = progress.target > 0
+      ? `${money(progress.current)} of ${money(progress.target)} ${label} — ${progress.pct}% complete`
+      : `Add a target amount to track progress.`;
+    return el("div", { class: "progress-block" }, [
+      el("progress", {
+        class: "progress-native",
+        max: "100",
+        value: String(progress.pct),
+        "aria-label": text,
+      }),
+      el("div", { class: "progress" }, [
+        el("span", { class: "progress__bar", style: `width:${progress.pct}%` }),
+      ]),
+      el("p", { class: "progress__label", text: supportingText ? `${text} ${supportingText}` : text }),
+    ]);
+  }
+
+  function summaryMetric(label, value, hint) {
+    return el("div", { class: "section-summary__item" }, [
+      el("span", { class: "section-summary__label", text: label }),
+      el("strong", { class: "section-summary__value", text: value }),
+      hint ? el("span", { class: "section-summary__hint", text: hint }) : null,
+    ].filter(Boolean));
+  }
+
+  function monthLabelFromOffset(months) {
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() + months);
+    return d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+  }
+
+  function completionMonthFromMonthly(remaining, monthly) {
+    if (num(remaining) <= CURRENCY_TOLERANCE || num(monthly) <= CURRENCY_TOLERANCE) return "";
+    return monthLabelFromOffset(Math.ceil(num(remaining) / num(monthly)));
   }
 
   /* ---------- Renderers ---------- */
@@ -918,8 +974,12 @@
     if (highestApr) {
       items.push(insight("highest-apr", "neutral", 61, "Highest recorded APR", `${highestApr.name || "A debt"} currently has the highest recorded APR at ${num(highestApr.apr).toFixed(1)}%.`, { value: `${num(highestApr.apr).toFixed(1)}%`, actionLabel: "Review debt", actionTarget: "debtSection" }));
     }
+    const nearing = active.filter((d) => num(d.payment) > 0 && debtMonths(d.balance, d.apr, d.payment) !== Infinity).sort((a, b) => debtMonths(a.balance, a.apr, a.payment) - debtMonths(b.balance, b.apr, b.payment))[0];
+    if (nearing && debtMonths(nearing.balance, nearing.apr, nearing.payment) <= 3) {
+      items.push(insight("debt-nearing", "positive", 59, "Debt nearing completion", `${nearing.name || "A debt"} could be cleared within ${debtMonths(nearing.balance, nearing.apr, nearing.payment)} month${debtMonths(nearing.balance, nearing.apr, nearing.payment) === 1 ? "" : "s"} at the recorded payment.`, { value: payoffEstimateText(nearing), actionLabel: "Review debt", actionTarget: "debtSection" }));
+    }
     if (cleared) {
-      items.push(insight("debt-cleared", "positive", 62, "Debt cleared", `You cleared your ${cleared.name} balance.`, { value: money(0), actionLabel: "Review debt", actionTarget: "debtSection" }));
+      items.push(insight("debt-cleared", "positive", 51, "Debt cleared", `You cleared your ${cleared.name} balance.`, { value: money(0), actionLabel: "Review debt", actionTarget: "debtSection" }));
     }
     return items;
   }
@@ -931,6 +991,10 @@
     const completed = funds.find((f) => num(f.cost) > 0 && num(f.saved) + CURRENCY_TOLERANCE >= num(f.cost));
     if (completed) {
       items.push(insight("sinking-completed", "positive", 52, "Sinking fund completed", `${completed.name || "A sinking fund"} has reached its target amount.`, { value: money(num(completed.cost)), actionLabel: "Update sinking fund", actionTarget: "sinkingSection" }));
+    }
+    const behind = funds.map((f) => ({ fund: f, status: sinkingStatus(f) })).find((x) => x.status.key === "behind");
+    if (behind) {
+      items.push(insight("sinking-behind", "attention", 49, "Sinking fund behind schedule", `${behind.fund.name || "A sinking fund"} is ${behind.status.detail.toLowerCase()}`, { value: money(behind.status.progress.remaining), actionLabel: "Update sinking fund", actionTarget: "sinkingSection" }));
     }
     const missed = funds.find((f) => num(f.cost) > num(f.saved) && f.date && monthsUntilRaw(f.date) < 0);
     if (missed) {
@@ -1203,27 +1267,63 @@
     const container = document.getElementById("goalsList");
     container.textContent = "";
     const items = state.goals || [];
+    renderGoalsSummary(items);
     const hasGoalProgress = items.some((g) => num(g.target) > 0 || num(g.current) > 0 || num(g.monthly) > 0);
     if (!items.length || !hasGoalProgress) {
       container.appendChild(emptyState("No savings goal targets yet", "Create a target for something you are working towards, such as an emergency fund or house deposit.", "Create savings goal", sectionAction("goalsSection", "input[aria-label='Goal name']", "goals")));
     }
-    items.forEach((g) => container.appendChild(makeGoalCard(g)));
+    sortAndFilterGoals(items).forEach((g) => container.appendChild(makeGoalCard(g)));
+  }
+
+  function renderGoalsSummary(items) {
+    const summary = document.getElementById("goalsSummary");
+    if (!summary) return;
+    const totalTarget = sum(items, "target");
+    const totalSaved = sum(items, "current");
+    const totalRemaining = items.reduce((acc, g) => acc + Math.max(num(g.target) - num(g.current), 0), 0);
+    const completed = items.filter((g) => goalCalc(g).complete).length;
+    summary.textContent = "";
+    [
+      summaryMetric("Target value", money(totalTarget)),
+      summaryMetric("Saved", money(totalSaved)),
+      summaryMetric("Remaining", money(totalRemaining)),
+      summaryMetric("Completed", String(completed)),
+    ].forEach((item) => summary.appendChild(item));
+  }
+
+  function sortAndFilterGoals(items) {
+    const filter = viewPrefs.goals.filter;
+    const sort = viewPrefs.goals.sort;
+    return items
+      .filter((g) => {
+        const complete = goalCalc(g).complete;
+        if (filter === "active") return !complete;
+        if (filter === "completed") return complete;
+        return true;
+      })
+      .slice()
+      .sort((a, b) => {
+        const ca = goalCalc(a), cb = goalCalc(b);
+        if (sort === "progress") return cb.pct - ca.pct;
+        if (sort === "remaining") return cb.remaining - ca.remaining;
+        if (sort === "name") return cleanName(a.name).localeCompare(cleanName(b.name));
+        const ma = ca.months == null ? Infinity : ca.months;
+        const mb = cb.months == null ? Infinity : cb.months;
+        return ma - mb;
+      });
   }
 
   function goalCalc(g) {
     const target = num(g.target), current = num(g.current), monthly = num(g.monthly);
-    const remaining = Math.max(target - current, 0);
+    const progress = progressData(current, target);
+    const remaining = progress.remaining;
     let months = null, date = null;
     if (remaining <= 0 && target > 0) { months = 0; }
     else if (monthly > 0 && remaining > 0) {
       months = Math.ceil(remaining / monthly);
-      const d = new Date();
-      d.setDate(1);
-      d.setMonth(d.getMonth() + months);
-      date = d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+      date = monthLabelFromOffset(months);
     }
-    const pct = target > 0 ? Math.min((current / target) * 100, 100) : 0;
-    return { remaining, months, date, pct };
+    return { remaining, months, date, pct: progress.pct, complete: progress.complete };
   }
 
   function makeGoalCard(g) {
@@ -1236,9 +1336,9 @@
       },
     });
     const del = el("button", {
-      class: "btn btn--icon", type: "button", title: "Remove goal", "aria-label": "Remove goal",
+      class: "btn btn--icon", type: "button", title: "Delete goal", "aria-label": `Delete ${g.name || "savings"} goal`,
       onclick: () => {
-        openConfirm(`Delete ${g.name || "this savings goal"}?`, "This will remove the goal, its target, current saved amount, monthly contribution, and progress calculation.", "Delete", () => {
+        openConfirm(`Delete the ${g.name || "savings"} goal?`, "This removes the tracked savings goal, its target, current saved amount, monthly contribution, and progress calculation.", "Delete", () => {
           state.goals = state.goals.filter((x) => x.id !== g.id);
           save(); renderGoals(); renderInsights(); renderAdvisor(); notify("Savings goal deleted");
         });
@@ -1257,6 +1357,10 @@
               const message = decimalValidation(e.target.value, label);
               if (message) { setFieldError(e.target, message); return; }
               const next = Number(e.target.value);
+              if (key === "target" && next <= 0) {
+                setFieldError(e.target, "Target must be greater than £0.00.");
+                return;
+              }
               if (key === "current" && num(g.target) > 0 && next > num(g.target)) {
                 setFieldError(e.target, "Current saved cannot be higher than the target.");
                 return;
@@ -1267,7 +1371,7 @@
               }
               g[key] = next;
               setFieldError(e.target, "");
-              save(); refreshGoalCard(g, card); renderAdvisor(); renderSummary();
+              save(); refreshGoalCard(g, card); renderGoalsSummary(state.goals || []); renderInsights(); renderAdvisor(); renderSummary();
             },
           }),
         ]),
@@ -1277,10 +1381,8 @@
     const calcLine = el("div", { class: "goal__calc" });
     fillGoalCalc(calcLine, c);
 
-    const bar = el("div", { class: "progress__bar" });
-    setBar(bar, c.pct);
-    const progress = el("div", { class: "progress" }, [bar]);
-    const progressLabel = el("span", { class: "progress__label", text: progressText(g, c) });
+    const progressWrap = el("div");
+    fillGoalProgress(progressWrap, g, c);
 
     const card = el("div", { class: "goal", "data-id": g.id }, [
       el("div", { class: "goal__top" }, [name, del]),
@@ -1289,39 +1391,57 @@
         moneyField("Current saved", "current"),
         moneyField("Monthly contribution", "monthly"),
       ]),
-      calcLine, progress, progressLabel,
+      calcLine,
+      milestoneList(c.pct),
+      progressWrap,
     ]);
     card._calcLine = calcLine;
-    card._bar = bar;
-    card._progressLabel = progressLabel;
+    card._progressWrap = progressWrap;
     return card;
   }
 
   function progressText(g, c) {
-    return `${money(num(g.current))} of ${money(num(g.target))} · ${Math.round(c.pct)}%`;
+    return `${money(num(g.current))} of ${money(num(g.target))} saved — ${c.pct}% complete`;
   }
 
   function fillGoalCalc(node, c) {
     node.textContent = "";
     let monthsText;
-    if (c.months === 0) monthsText = "🎉 Goal reached";
-    else if (c.months == null) monthsText = "—";
+    if (c.complete) monthsText = "Goal completed";
+    else if (c.months == null) monthsText = "Add a monthly contribution to estimate completion.";
     else monthsText = `${c.months} month${c.months === 1 ? "" : "s"}`;
-    node.appendChild(el("span", {}, ["Months remaining: ", el("b", { text: monthsText })]));
-    node.appendChild(el("span", {}, ["Est. completion: ", el("b", { text: c.date || (c.months === 0 ? "Done" : "—") })]));
+    node.appendChild(el("span", {}, ["Remaining: ", el("b", { text: money(c.remaining) })]));
+    node.appendChild(el("span", {}, ["Contribution: ", el("b", { text: monthsText })]));
+    if (c.date && !c.complete) {
+      node.appendChild(el("span", {}, ["Estimated completion: ", el("b", { text: c.date })]));
+    }
   }
 
-  function setBar(bar, pct) {
-    bar.style.width = pct + "%";
-    // Green when at/near goal, amber mid, keeps a positive feel.
-    bar.style.background = pct >= 100 ? "var(--c-good)" : pct >= 50 ? "var(--c-primary)" : "var(--c-warn)";
+  function milestoneList(progressPct) {
+    return el("div", { class: "milestones", "aria-label": "Savings goal milestones" }, [
+      ["Started", progressPct > 0],
+      ["25%", progressPct >= 25],
+      ["50%", progressPct >= 50],
+      ["75%", progressPct >= 75],
+      ["Complete", progressPct >= 100],
+    ].map(([label, done]) => el("span", { class: done ? "is-hit" : "", text: label })));
+  }
+
+  function fillGoalProgress(node, g, c) {
+    node.textContent = "";
+    const progress = progressData(g.current, g.target);
+    const supporting = c.complete
+      ? "Goal completed."
+      : c.date
+        ? `At your current contribution, this goal could be completed by ${c.date}.`
+        : "Add a monthly contribution to estimate completion.";
+    node.appendChild(progressComponent("saved", progress, supporting));
   }
 
   function refreshGoalCard(g, card) {
     const c = goalCalc(g);
     fillGoalCalc(card._calcLine, c);
-    setBar(card._bar, c.pct);
-    card._progressLabel.textContent = progressText(g, c);
+    fillGoalProgress(card._progressWrap, g, c);
   }
 
   /* ---------- Debts ---------- */
@@ -1342,12 +1462,55 @@
     const body = document.getElementById("debtBody");
     body.textContent = "";
     const items = state.debts || [];
+    renderDebtSummary(items);
     if (!items.length) {
-      body.appendChild(el("tr", {}, [el("td", { colspan: "6", "data-label": "" }, [
+      body.appendChild(el("tr", {}, [el("td", { colspan: "8", "data-label": "" }, [
         emptyState("No debts being tracked", "Add a debt to calculate repayment progress and include payments in your monthly plan.", "Add debt", sectionAction("debtSection", "input[aria-label='Debt name']", "debts")),
       ])]));
     }
-    items.forEach((d) => body.appendChild(makeDebtRow(d)));
+    sortAndFilterDebts(items).forEach((d) => body.appendChild(makeDebtRow(d)));
+  }
+
+  function renderDebtSummary(items) {
+    const summary = document.getElementById("debtSummary");
+    if (!summary) return;
+    const active = items.filter((d) => num(d.balance) > CURRENCY_TOLERANCE);
+    const cleared = items.filter((d) => cleanName(d.name) && num(d.balance) <= CURRENCY_TOLERANCE);
+    const outstanding = active.reduce((acc, d) => acc + num(d.balance), 0);
+    const payments = active.reduce((acc, d) => acc + num(d.payment), 0);
+    const aprDebts = active.filter((d) => num(d.apr) > 0 && num(d.balance) > 0);
+    const weightedApr = aprDebts.length ? aprDebts.reduce((acc, d) => acc + num(d.apr) * num(d.balance), 0) / aprDebts.reduce((acc, d) => acc + num(d.balance), 0) : null;
+    summary.textContent = "";
+    [
+      summaryMetric("Outstanding", money(outstanding)),
+      summaryMetric("Monthly payments", money(payments)),
+      summaryMetric("Active debts", String(active.length)),
+      summaryMetric("Cleared", String(cleared.length)),
+      weightedApr == null ? null : summaryMetric("Weighted APR", `${weightedApr.toFixed(1)}%`, "Weighted by current balance"),
+    ].filter(Boolean).forEach((item) => summary.appendChild(item));
+  }
+
+  function sortAndFilterDebts(items) {
+    const filter = viewPrefs.debts.filter;
+    const sort = viewPrefs.debts.sort;
+    return items
+      .filter((d) => {
+        const cleared = cleanName(d.name) && num(d.balance) <= CURRENCY_TOLERANCE;
+        if (filter === "active") return !cleared;
+        if (filter === "completed") return cleared;
+        return true;
+      })
+      .slice()
+      .sort((a, b) => {
+        if (sort === "apr") return num(b.apr) - num(a.apr);
+        if (sort === "payoff") {
+          const ma = debtMonths(a.balance, a.apr, a.payment);
+          const mb = debtMonths(b.balance, b.apr, b.payment);
+          return (ma == null || ma === Infinity ? 999999 : ma) - (mb == null || mb === Infinity ? 999999 : mb);
+        }
+        if (sort === "name") return cleanName(a.name).localeCompare(cleanName(b.name));
+        return num(b.balance) - num(a.balance);
+      });
   }
 
   function makeDebtRow(d) {
@@ -1361,11 +1524,15 @@
             if (!name) return;
             d[key] = name;
           } else {
-            const message = decimalValidation(e.target.value, opts.label || "Amount", { max: key === "apr" ? 100 : 999999999 });
+            const message = decimalValidation(e.target.value, opts.label || "Amount", { required: key !== "originalBalance", max: key === "apr" ? 100 : 999999999 });
             if (message) { setFieldError(e.target, message); return; }
-            const next = Number(e.target.value);
+            const next = String(e.target.value).trim() ? Number(e.target.value) : 0;
             if (key === "payment" && num(d.balance) > 0 && next > num(d.balance)) {
               setFieldError(e.target, "Monthly payment cannot be higher than the outstanding balance.");
+              return;
+            }
+            if (key === "originalBalance" && next > 0 && next < num(d.balance)) {
+              setFieldError(e.target, "Original balance cannot be lower than the current balance.");
               return;
             }
             if (key === "balance" && next === 0) d.payment = 0;
@@ -1373,12 +1540,20 @@
               setFieldError(e.target, "Balance cannot be lower than the monthly payment already entered.");
               return;
             }
+            if (key === "balance" && num(d.originalBalance) > 0 && next > num(d.originalBalance)) {
+              setFieldError(e.target, "Balance cannot be higher than the original balance.");
+              return;
+            }
             d[key] = next;
             setFieldError(e.target, "");
           }
           save();
-          payoffCell.textContent = payoffText(d);
+          payoffCell.textContent = payoffEstimateText(d);
           payoffCell.className = "col-num cell-calc " + payoffClass(d);
+          progressCell.textContent = "";
+          progressCell.appendChild(debtProgressNode(d));
+          if (key === "apr") aprHint.textContent = num(d.apr) > 0 ? `${num(d.apr).toFixed(1)}% APR` : "APR not entered";
+          renderDebtSummary(state.debts || []);
           renderInsights();
           renderAdvisor();
           if (key === "balance" && num(d.balance) === 0) renderDebts();
@@ -1386,15 +1561,18 @@
       }, opts.attrs));
     }
     const name = input("name", { text: true, attrs: { type: "text", class: "cell-input cell-input--name editable", placeholder: "Card / loan", "aria-label": "Debt name" } });
+    const original = input("originalBalance", { label: "Original balance", attrs: { type: "number", inputmode: "decimal", min: "0", step: "0.01", class: "cell-input cell-input--num editable", placeholder: "Optional", "aria-label": "Original balance" } });
     const balance = input("balance", { label: "Balance", attrs: { type: "number", inputmode: "decimal", min: "0", step: "0.01", class: "cell-input cell-input--num editable", placeholder: "0.00", "aria-label": "Balance" } });
     const apr = input("apr", { label: "APR", attrs: { type: "number", inputmode: "decimal", min: "0", step: "0.1", class: "cell-input cell-input--num editable", placeholder: "0", "aria-label": "APR" } });
+    const aprHint = el("span", { class: "logged-hint", text: num(d.apr) > 0 ? `${num(d.apr).toFixed(1)}% APR` : "APR not entered" });
     const payment = input("payment", { label: "Monthly payment", attrs: { type: "number", inputmode: "decimal", min: "0", step: "0.01", class: "cell-input cell-input--num editable", placeholder: "0.00", "aria-label": "Monthly payment" } });
 
-    const payoffCell = el("td", { class: "col-num cell-calc " + payoffClass(d), "data-label": "Payoff" }, [payoffText(d)]);
+    const payoffCell = el("td", { class: "col-num cell-calc " + payoffClass(d), "data-label": "Payoff" }, [payoffEstimateText(d)]);
+    const progressCell = el("td", { class: "col-name debt-progress-cell", "data-label": "Progress" }, [debtProgressNode(d)]);
     const del = el("button", {
-      class: "btn btn--icon", type: "button", title: "Remove debt", "aria-label": "Remove debt",
+      class: "btn btn--icon", type: "button", title: "Delete debt", "aria-label": `Delete ${d.name || "debt"} debt record`,
       onclick: () => {
-        openConfirm(`Delete ${d.name || "this debt"}?`, `This will remove the ${money(d.balance)} balance and its payoff calculation from the debt tracker.`, "Delete", () => {
+        openConfirm(`Delete the ${d.name || "debt"} debt record?`, "This removes the tracked debt record and payoff calculation. It does not alter historical transactions.", "Delete", () => {
           state.debts = state.debts.filter((x) => x.id !== d.id);
           save(); renderDebts(); renderInsights(); renderAdvisor(); notify("Debt deleted");
         });
@@ -1403,12 +1581,40 @@
 
     return el("tr", {}, [
       el("td", { class: "col-name", "data-label": "Debt" }, [name]),
+      el("td", { class: "col-num", "data-label": "Original" }, [original]),
       el("td", { class: "col-num", "data-label": "Balance" }, [balance]),
-      el("td", { class: "col-num", "data-label": "APR %" }, [apr]),
+      el("td", { class: "col-num", "data-label": "APR %" }, [
+        apr,
+        aprHint,
+      ]),
       el("td", { class: "col-num", "data-label": "Monthly" }, [payment]),
       payoffCell,
+      progressCell,
       el("td", { class: "col-act", "data-label": "" }, [del]),
     ]);
+  }
+
+  function debtProgressNode(d) {
+    const original = num(d.originalBalance);
+    const balance = num(d.balance);
+    if (balance <= CURRENCY_TOLERANCE) {
+      return original > 0
+        ? progressComponent("repaid", progressData(original - balance, original), "Debt cleared.")
+        : el("p", { class: "progress__label", text: "Debt cleared. Add an original balance to show percentage repaid." });
+    }
+    if (original <= CURRENCY_TOLERANCE) {
+      return el("p", { class: "progress__label", text: "Add an original balance to track percentage repaid." });
+    }
+    const repaid = Math.max(original - balance, 0);
+    return progressComponent("repaid", progressData(repaid, original), `${money(balance)} remaining.`);
+  }
+
+  function payoffEstimateText(d) {
+    if (num(d.balance) <= CURRENCY_TOLERANCE) return "Debt cleared";
+    const m = debtMonths(d.balance, d.apr, d.payment);
+    if (m == null) return "Add payment";
+    if (m === Infinity) return "No payoff";
+    return `${payoffText(d)} est.`;
   }
 
   function payoffText(d) {
@@ -1447,20 +1653,97 @@
     const body = document.getElementById("sinkingBody");
     body.textContent = "";
     const items = state.sinkingFunds || [];
+    renderSinkingSummary(items);
     if (!items.length) {
-      body.appendChild(el("tr", {}, [el("td", { colspan: "7", "data-label": "" }, [
+      body.appendChild(el("tr", {}, [el("td", { colspan: "8", "data-label": "" }, [
         emptyState("No upcoming costs planned", "Prepare for known future expenses by saving towards them gradually.", "Add upcoming cost", sectionAction("sinkingSection", "input[aria-label='Total cost']", "sinking")),
       ])]));
     }
-    items.forEach((f) => body.appendChild(makeSinkingRow(f)));
+    sortAndFilterSinking(items).forEach((f) => body.appendChild(makeSinkingRow(f)));
     updateSinkingTotals();
+  }
+
+  function sinkingStatus(f) {
+    const progress = progressData(f.saved, f.cost);
+    const remaining = progress.remaining;
+    const targetOffset = monthsUntilRaw(f.date);
+    const requiredMonthly = sinkingMonthly(f);
+    if (progress.complete) return { key: "completed", label: "Fund completed", detail: "Target amount has been reached.", requiredMonthly, progress };
+    if (f.date && targetOffset < 0) return { key: "missed", label: "Target date passed", detail: `Target date has passed with ${money(remaining)} remaining.`, requiredMonthly, progress };
+    if (!f.start || !f.date || num(f.cost) <= CURRENCY_TOLERANCE) {
+      return { key: "unknown", label: "Schedule unavailable", detail: "Add start and target months to compare expected and actual progress.", requiredMonthly, progress };
+    }
+    const totalMonths = Math.max(monthsBetween(f.start, f.date), 1);
+    const elapsedMonths = Math.max(Math.min(monthsBetween(f.start, monthsAheadISO(0)), totalMonths), 0);
+    const expected = (num(f.cost) / totalMonths) * elapsedMonths;
+    const variance = num(f.saved) - expected;
+    if (variance > 5) return { key: "ahead", label: "Ahead of schedule", detail: `Ahead of schedule by ${money(variance)}.`, requiredMonthly, progress };
+    if (variance < -5) return { key: "behind", label: "Behind schedule", detail: `${money(Math.abs(variance))} behind the amount expected by this month.`, requiredMonthly, progress };
+    return { key: "track", label: "On track", detail: `On track for the ${formatMonth(f.date)} target.`, requiredMonthly, progress };
+  }
+
+  function monthsBetween(startIso, endIso) {
+    if (!startIso || !endIso) return 0;
+    const [sy, sm] = String(startIso).split("-").map((x) => parseInt(x, 10));
+    const [ey, em] = String(endIso).split("-").map((x) => parseInt(x, 10));
+    if (!sy || !sm || !ey || !em) return 0;
+    return (ey - sy) * 12 + (em - sm) + 1;
+  }
+
+  function formatMonth(iso) {
+    if (!iso || !/^\d{4}-\d{2}$/.test(String(iso))) return "target";
+    const [y, m] = iso.split("-").map((x) => parseInt(x, 10));
+    return new Date(y, m - 1, 1).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+  }
+
+  function renderSinkingSummary(items) {
+    const summary = document.getElementById("sinkingSummary");
+    if (!summary) return;
+    const statuses = items.map(sinkingStatus);
+    const nearest = items.filter((f) => f.date && !sinkingStatus(f).progress.complete).sort((a, b) => monthsUntilRaw(a.date) - monthsUntilRaw(b.date))[0];
+    summary.textContent = "";
+    [
+      summaryMetric("Target value", money(sum(items, "cost"))),
+      summaryMetric("Saved", money(sum(items, "saved"))),
+      summaryMetric("Still required", money(items.reduce((acc, f) => acc + Math.max(num(f.cost) - num(f.saved), 0), 0))),
+      summaryMetric("On track", String(statuses.filter((s) => s.key === "track" || s.key === "ahead" || s.key === "completed").length)),
+      summaryMetric("Behind", String(statuses.filter((s) => s.key === "behind" || s.key === "missed").length)),
+      summaryMetric("Nearest target", nearest ? formatMonth(nearest.date) : "—"),
+    ].forEach((item) => summary.appendChild(item));
+  }
+
+  function sortAndFilterSinking(items) {
+    const filter = viewPrefs.sinking.filter;
+    const sort = viewPrefs.sinking.sort;
+    return items
+      .filter((f) => {
+        const complete = sinkingStatus(f).progress.complete;
+        if (filter === "active") return !complete;
+        if (filter === "completed") return complete;
+        return true;
+      })
+      .slice()
+      .sort((a, b) => {
+        const sa = sinkingStatus(a), sb = sinkingStatus(b);
+        if (sort === "status") {
+          const rank = { missed: 0, behind: 1, unknown: 2, track: 3, ahead: 4, completed: 5 };
+          return rank[sa.key] - rank[sb.key];
+        }
+        if (sort === "required") return sb.requiredMonthly - sa.requiredMonthly;
+        if (sort === "name") return cleanName(a.name).localeCompare(cleanName(b.name));
+        return monthsUntilRaw(a.date) - monthsUntilRaw(b.date);
+      });
   }
 
   function makeSinkingRow(f) {
     const monthlyCell = el("td", { class: "col-num cell-calc", "data-label": "/ month" }, [money(sinkingMonthly(f))]);
+    const statusCell = el("td", { class: "col-name", "data-label": "Status" }, [sinkingStatusNode(f)]);
     const onEdit = () => {
       save();
       monthlyCell.textContent = money(sinkingMonthly(f));
+      statusCell.textContent = "";
+      statusCell.appendChild(sinkingStatusNode(f));
+      renderSinkingSummary(state.sinkingFunds || []);
       updateSinkingTotals();
     };
     const name = el("input", {
@@ -1512,9 +1795,9 @@
       },
     });
     const del = el("button", {
-      class: "btn btn--icon", type: "button", title: "Remove fund", "aria-label": "Remove fund",
+      class: "btn btn--icon", type: "button", title: "Delete fund", "aria-label": `Delete ${f.name || "sinking fund"} fund`,
       onclick: () => {
-        openConfirm(`Delete ${f.name || "this sinking fund"}?`, `This will remove its ${money(sinkingMonthly(f))} monthly set-aside from planned commitments.`, "Delete", () => {
+        openConfirm(`Delete the ${f.name || "sinking fund"} sinking fund?`, `This removes the tracked sinking-fund record and its ${money(sinkingMonthly(f))} monthly set-aside from planned commitments.`, "Delete", () => {
           state.sinkingFunds = state.sinkingFunds.filter((x) => x.id !== f.id);
           save(); renderSinking(); renderSummary(); renderInsights(); notify("Sinking fund deleted");
         });
@@ -1527,7 +1810,20 @@
       el("td", { class: "col-num", "data-label": "From" }, [start]),
       el("td", { class: "col-num", "data-label": "By" }, [date]),
       monthlyCell,
+      statusCell,
       el("td", { class: "col-act", "data-label": "" }, [del]),
+    ]);
+  }
+
+  function sinkingStatusNode(f) {
+    const status = sinkingStatus(f);
+    const guidance = status.key === "behind" && status.requiredMonthly > CURRENCY_TOLERANCE
+      ? ` To reach the target on time, contribute approximately ${money(status.requiredMonthly)} per month.`
+      : "";
+    return el("div", { class: "status-progress status-progress--" + status.key }, [
+      el("strong", { text: status.label }),
+      el("span", { text: status.detail + guidance }),
+      progressComponent("saved", status.progress, `${money(status.progress.remaining)} remaining.`),
     ]);
   }
 
@@ -1746,9 +2042,9 @@
       notify(listKey === "expenses" ? "Expense added" : "Savings category added");
     } else if (listKey === "goals") {
       state.goals.push({ id: uid(), name: uniqueName(state.goals, "New goal"), target: 0, current: 0, monthly: 0 });
-      save(); renderGoals(); notify("Savings goal added");
+      save(); renderGoals(); renderInsights(); notify("Savings goal added");
     } else if (listKey === "debts") {
-      state.debts.push({ id: uid(), name: uniqueName(state.debts, "New debt"), balance: 0, apr: 0, payment: 0 });
+      state.debts.push({ id: uid(), name: uniqueName(state.debts, "New debt"), originalBalance: 0, balance: 0, apr: 0, payment: 0 });
       save(); renderDebts(); renderInsights(); notify("Debt added");
     } else if (listKey === "sinking") {
       state.sinkingFunds.push({ id: uid(), name: uniqueName(state.sinkingFunds, "New fund"), cost: 0, saved: 0, start: "", date: nextMonthISO() });
@@ -1831,6 +2127,22 @@
       return;
     }
     state.monthlySavingsTarget = next; setFieldError(e.target, ""); save(); renderAdvisor(); renderSummary();
+  });
+  [
+    ["goalsSort", "goals", "sort", renderGoals],
+    ["goalsFilter", "goals", "filter", renderGoals],
+    ["sinkingSort", "sinking", "sort", renderSinking],
+    ["sinkingFilter", "sinking", "filter", renderSinking],
+    ["debtSort", "debts", "sort", renderDebts],
+    ["debtFilter", "debts", "filter", renderDebts],
+  ].forEach(([id, scope, key, render]) => {
+    const control = document.getElementById(id);
+    if (!control) return;
+    control.value = viewPrefs[scope][key];
+    control.addEventListener("change", (e) => {
+      viewPrefs[scope][key] = e.target.value;
+      render();
+    });
   });
   document.querySelectorAll("[data-add]").forEach((btn) => {
     btn.addEventListener("click", () => addRow(btn.getAttribute("data-add")));
