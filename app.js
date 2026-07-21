@@ -9,26 +9,40 @@
   const DEFAULT_STATE = {
     income: 2022.64,
     expenses: [
-      "Rent/Mortgage", "Utilities", "Internet/Phone", "Groceries",
-      "Transportation", "Insurance", "Subscriptions", "Dining Out",
-      "Personal Care", "Entertainment", "Debt Minimum Payments", "Miscellaneous",
-    ].map((name) => ({ id: uid(), name, budgeted: 0, actual: 0 })),
+      { name: "Transport", budgeted: 104 },
+      { name: "Phone", budgeted: 60 },
+      { name: "Internet / WiFi", budgeted: 35 },
+      { name: "Subscriptions (Claude, ChatGPT +)", budgeted: 90 },
+      { name: "Food & takeaway", budgeted: 250 },
+      { name: "Family support (Mum/Dad)", budgeted: 75 },
+      { name: "Personal care (toiletries, perfume…)", budgeted: 30 },
+      { name: "Cleaning", budgeted: 20 },
+      { name: "Dates / going out (Ayo)", budgeted: 60 },
+      { name: "Personal spending allowance", budgeted: 100 },
+    ].map((e) => ({ id: uid(), name: e.name, budgeted: e.budgeted, actual: 0 })),
     savings: [
-      "Emergency Fund", "High-Yield Savings/Investing", "House Down Payment Fund",
-      "Wedding Fund", "Extra Debt Payoff",
-    ].map((name) => ({ id: uid(), name, budgeted: 0, actual: 0 })),
+      { name: "Emergency / High-Yield pot", budgeted: 500 },
+      { name: "House Down Payment Fund", budgeted: 0 },
+      { name: "Wedding Fund", budgeted: 0 },
+      { name: "Investing", budgeted: 0 },
+    ].map((s) => ({ id: uid(), name: s.name, budgeted: s.budgeted, actual: 0 })),
     goals: [
-      { name: "Emergency Fund", target: 0, current: 0, monthly: 0 },
+      { name: "Emergency Fund", target: 0, current: 0, monthly: 500 },
       { name: "House Down Payment", target: 0, current: 0, monthly: 0 },
       { name: "High-Yield Savings/Investing", target: 0, current: 0, monthly: 0 },
       { name: "Wedding Fund", target: 0, current: 0, monthly: 0 },
-      { name: "Debt Payoff", target: 0, current: 0, monthly: 0 },
     ].map((g) => Object.assign({ id: uid() }, g)),
     debts: [
-      { id: uid(), name: "", balance: 0, apr: 0, payment: 0 },
-    ],
+      { name: "Overdraft", balance: 1025, apr: 39.9, payment: 0 },
+      { name: "Credit card", balance: 250, apr: 24.9, payment: 0 },
+      { name: "Personal debt", balance: 200, apr: 0, payment: 0 },
+      { name: "Owe a friend (this month)", balance: 50, apr: 0, payment: 0 },
+      { name: "Friends payback (1st)", balance: 100, apr: 0, payment: 0 },
+      { name: "Friends payback (rest)", balance: 600, apr: 0, payment: 0 },
+    ].map((d) => Object.assign({ id: uid() }, d)),
     tithePct: 10,
     emergencyMonths: 3,
+    monthlySavingsTarget: 500,
     sinkingFunds: [
       { id: uid(), name: "Germany trip", cost: 0, saved: 0, date: nextMonthISO() },
     ],
@@ -533,6 +547,10 @@
     if (bufferInput && document.activeElement !== bufferInput) {
       bufferInput.value = state.emergencyMonths != null ? state.emergencyMonths : 3;
     }
+    const savingsTargetInput = document.getElementById("savingsTargetInput");
+    if (savingsTargetInput && document.activeElement !== savingsTargetInput) {
+      savingsTargetInput.value = state.monthlySavingsTarget != null ? state.monthlySavingsTarget : "";
+    }
 
     const t = totals();
     const income = t.income;
@@ -548,33 +566,39 @@
     const emg = findEmergencyGoal();
     const emgCurrent = emg ? num(emg.current) : 0;
     const emergencyTarget = Math.max(needs * emergencyMonths, emg ? num(emg.target) : 0);
-    const emergencyGap = Math.max(emergencyTarget - emgCurrent, 0);
 
+    const savingsTarget = num(state.monthlySavingsTarget);
     const sinkReq = state.sinkingFunds.reduce((a, f) => a + sinkingMonthly(f), 0);
-    const goalReq = state.goals.filter((g) => g !== emg).reduce((a, g) => a + num(g.monthly), 0);
-    const debtBalance = sum(state.debts, "balance");
 
-    // Waterfall: fill each bucket in priority order until income runs out.
+    // Debts, most expensive first — that's the order we attack them.
+    const debts = state.debts
+      .filter((d) => num(d.balance) > 0)
+      .slice()
+      .sort((a, b) => num(b.apr) - num(a.apr));
+    const totalOwed = debts.reduce((a, d) => a + num(d.balance), 0);
+    const debtTarget = debts.length ? (debts[0].name || "your debt") : "";
+
+    // Waterfall: tithe -> essentials -> trip -> monthly savings -> debt blitz -> free.
     let rem = income;
     const titheAlloc = Math.min(rem, tithe); rem -= titheAlloc;
     const needsAlloc = Math.min(rem, needs); rem -= needsAlloc;
     const sinkAlloc = Math.min(rem, sinkReq); rem -= sinkAlloc;
-    const safetyAlloc = Math.min(rem, emergencyGap); rem -= safetyAlloc;
-    const goalAlloc = Math.min(rem, goalReq); rem -= goalAlloc;
-    const debtAlloc = debtBalance > 0 ? Math.min(rem, debtBalance) : 0; rem -= debtAlloc;
+    const savingsAlloc = Math.min(rem, savingsTarget); rem -= savingsAlloc;
+    const debtAlloc = Math.min(rem, totalOwed); rem -= debtAlloc;
     const investAlloc = Math.max(rem, 0);
 
     const needsShort = needs - needsAlloc;
     const sinkShort = sinkReq - sinkAlloc;
+    const savingsShort = savingsTarget - savingsAlloc;
+    const debtMonthsLeft = debtAlloc > 0.005 ? Math.ceil(totalOwed / debtAlloc) : 0;
 
     const rows = [
-      { label: "Tithe / Offering", sub: num(state.tithePct) + "% of income", amount: titheAlloc, color: "#a855f7", show: tithe > 0 },
-      { label: "Essentials (needs)", sub: "your monthly bills", amount: needsAlloc, color: "#ef4444", show: needs > 0 },
-      { label: "Trip & sinking funds", sub: sinkingSub(), amount: sinkAlloc, color: "#f59e0b", show: sinkReq > 0 },
-      { label: "Emergency buffer", sub: emergencyGap > 0 ? `building ${emergencyMonths}-mo safety · ${money(emgCurrent)} of ${money(emergencyTarget)}` : "fully funded 🎉", amount: safetyAlloc, color: "#9a6b4f", show: emergencyGap > 0 || safetyAlloc > 0 },
-      { label: "Savings goals", sub: "your goal contributions", amount: goalAlloc, color: "#16a34a", show: goalReq > 0 },
-      { label: "Extra debt payoff", sub: "beyond the minimums", amount: debtAlloc, color: "#dc2626", show: debtAlloc > 0 },
-      { label: "Investing / free", sub: "surplus to grow", amount: investAlloc, color: "#0ea5e9", show: income > 0 },
+      { label: "Tithe / Offering", sub: num(state.tithePct) + "% of income (flexible)", amount: titheAlloc, color: "#a855f7", show: tithe > 0 },
+      { label: "Essentials (needs)", sub: "bills + allowances", amount: needsAlloc, color: "#b91c1c", show: needs > 0 },
+      { label: "Trip & sinking funds", sub: sinkingSub(), amount: sinkAlloc, color: "#b45309", show: sinkReq > 0 },
+      { label: "Monthly savings", sub: emergencyTarget > 0 ? `into your pot · ${money(emgCurrent)} of ${money(emergencyTarget)} buffer` : "into your savings pot", amount: savingsAlloc, color: "#4d7c0f", show: savingsTarget > 0 },
+      { label: "Debt payoff", sub: debtTarget ? `${debtTarget} first · ${money(totalOwed)} left` : "all clear", amount: debtAlloc, color: "#dc2626", show: totalOwed > 0 },
+      { label: "Free / investing", sub: "spare to grow", amount: investAlloc, color: "#0e7490", show: income > 0 },
     ];
 
     rows.filter((r) => r.show).forEach((r) => {
@@ -595,8 +619,10 @@
     let status;
     if (income <= 0) status = { type: "idle", text: "Enter your monthly income above to see your personalised plan." };
     else if (needsShort > 0.005) status = { type: "warn", text: `⚠️ You're ${money(needsShort)} short on essentials after tithe. Trim spending or lower the tithe % temporarily — don't skip rent.` };
-    else if (sinkShort > 0.005) status = { type: "warn", text: `⚠️ Essentials are covered, but you're ${money(sinkShort)}/mo short to hit your trip & sinking-fund dates. Push a date back or free up cash.` };
-    else if (investAlloc > 0.005) status = { type: "ok", text: `✅ You're covered — ${money(investAlloc)} is free to invest or grow this month.` };
+    else if (sinkShort > 0.005) status = { type: "warn", text: `⚠️ Essentials are covered, but you're ${money(sinkShort)}/mo short to hit your trip date. Push it back or free up cash.` };
+    else if (savingsShort > 0.005) status = { type: "warn", text: `⚠️ Essentials are safe, but only ${money(savingsAlloc)} of your ${money(savingsTarget)} savings target fits this month.` };
+    else if (totalOwed > 0) status = { type: "ok", text: `✅ Covered, ${money(savingsAlloc)} saved, and ${money(debtAlloc)} clears debt (${debtTarget} first) — debt-free in ~${debtMonthsLeft} month${debtMonthsLeft === 1 ? "" : "s"} at this pace.` };
+    else if (investAlloc > 0.005) status = { type: "ok", text: `✅ Debt-free and covered — ${money(investAlloc)} is free to invest or grow this month.` };
     else status = { type: "ok", text: "✅ Every pound has a job and your essentials are safe this month." };
     statusEl.className = "plan-status " + status.type;
     statusEl.textContent = status.text;
@@ -739,6 +765,9 @@
   });
   document.getElementById("bufferInput").addEventListener("input", (e) => {
     state.emergencyMonths = num(e.target.value); save(); renderAdvisor();
+  });
+  document.getElementById("savingsTargetInput").addEventListener("input", (e) => {
+    state.monthlySavingsTarget = num(e.target.value); save(); renderAdvisor();
   });
   document.querySelectorAll("[data-add]").forEach((btn) => {
     btn.addEventListener("click", () => addRow(btn.getAttribute("data-add")));

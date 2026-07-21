@@ -240,8 +240,12 @@ body {
 
 /* Advisor / plan */
 .card--plan { border-color: #e3cfb4; background: linear-gradient(180deg, #faf5ee 0%, #ffffff 60%); }
-.buffer-ctrl { display: inline-flex; align-items: center; gap: 8px; font-size: .82rem; color: var(--c-muted); font-weight: 600; margin: 0 0 12px; }
+.plan-ctrls { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 12px; }
+.buffer-ctrl { display: inline-flex; align-items: center; gap: 8px; font-size: .82rem; color: var(--c-muted); font-weight: 600; }
 .buffer-ctrl input { width: 58px; padding: 6px 8px; min-height: 34px; text-align: center; }
+.input-money--sm { width: 92px; }
+.input-money--sm input { width: 92px; padding: 6px 8px 6px 22px; min-height: 34px; text-align: right; }
+.input-money--sm .input-money__symbol { left: 9px; }
 .plan-status { font-weight: 700; font-size: .95rem; padding: 10px 12px; border-radius: 10px; margin-bottom: 12px; }
 .plan-status.ok { background: var(--c-good-bg); color: #14532d; }
 .plan-status.warn { background: var(--c-bad-bg); color: #7f1d1d; }

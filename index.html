@@ -141,11 +141,19 @@
       <div class="card__head">
         <h2>📋 This month&rsquo;s plan</h2>
       </div>
-      <p class="section-hint" id="planIntro">How to split this month&rsquo;s income so you never run short. Priority: tithe → essentials → safety buffer → trip &amp; goals → debt → investing.</p>
-      <label class="buffer-ctrl">Safety buffer:
-        <input id="bufferInput" class="input editable" type="number" inputmode="numeric" min="1" max="12" step="1" />
-        months of essentials
-      </label>
+      <p class="section-hint" id="planIntro">How to split this month&rsquo;s income so you never run short. Priority: tithe → essentials → trip → monthly savings → debt (most expensive first) → free.</p>
+      <div class="plan-ctrls">
+        <label class="buffer-ctrl">Save
+          <span class="input-money input-money--sm"><span class="input-money__symbol">£</span>
+            <input id="savingsTargetInput" class="input input--money editable" type="number" inputmode="decimal" min="0" step="10" />
+          </span>
+          / month
+        </label>
+        <label class="buffer-ctrl">Safety buffer:
+          <input id="bufferInput" class="input editable" type="number" inputmode="numeric" min="1" max="12" step="1" />
+          months
+        </label>
+      </div>
       <div class="plan-status" id="planStatus"></div>
       <ul class="plan-list" id="planList"></ul>
       <p class="plan-learn" id="planLearn"></p>
