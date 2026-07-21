@@ -150,6 +150,116 @@
     return node;
   }
 
+  function cleanName(value) { return String(value || "").trim().replace(/\s+/g, " "); }
+
+  function setFieldError(input, message) {
+    input.classList.toggle("is-invalid", Boolean(message));
+    input.setAttribute("aria-invalid", message ? "true" : "false");
+    let msg = input.parentElement && input.parentElement.querySelector(":scope > .validation-msg");
+    if (!msg && input.parentElement) {
+      msg = el("div", { class: "validation-msg" });
+      input.parentElement.appendChild(msg);
+    }
+    if (msg) {
+      msg.textContent = message || "";
+      msg.hidden = !message;
+    }
+  }
+
+  function decimalValidation(value, label, opts) {
+    const options = Object.assign({ required: true, max: 999999999 }, opts || {});
+    const raw = String(value == null ? "" : value).trim();
+    if (!raw) return options.required ? `${label} is required.` : "";
+    if (!/^-?\d+(\.\d{1,2})?$/.test(raw)) return `${label} must be a valid amount with up to 2 decimal places.`;
+    const valueNum = Number(raw);
+    if (!Number.isFinite(valueNum)) return `${label} must be a valid number.`;
+    if (valueNum < 0) return `${label} cannot be negative.`;
+    if (valueNum > options.max) return `${label} is unusually high. Please enter less than ${money(options.max)}.`;
+    return "";
+  }
+
+  function monthValidation(value, label, opts) {
+    const options = Object.assign({ required: true, allowPast: false }, opts || {});
+    const raw = String(value || "").trim();
+    if (!raw) return options.required ? `${label} is required.` : "";
+    if (!/^\d{4}-\d{2}$/.test(raw)) return `${label} must be a valid month.`;
+    const m = monthsUntilRaw(raw);
+    if (!options.allowPast && m < 0) return `${label} cannot be in a past month.`;
+    return "";
+  }
+
+  function duplicateMessage(list, item, label) {
+    const name = cleanName(item.name);
+    if (!name) return `${label} name is required.`;
+    const duplicate = list.some((x) => x.id !== item.id && cleanName(x.name).toLowerCase() === name.toLowerCase());
+    return duplicate ? `${label} names must be unique.` : "";
+  }
+
+  function uniqueName(list, base) {
+    const names = new Set(list.map((x) => cleanName(x.name).toLowerCase()).filter(Boolean));
+    if (!names.has(base.toLowerCase())) return base;
+    let i = 2;
+    while (names.has(`${base} ${i}`.toLowerCase())) i += 1;
+    return `${base} ${i}`;
+  }
+
+  function commitName(input, list, item, label, onValid) {
+    const next = cleanName(input.value);
+    const message = !next ? `${label} name is required.` : duplicateMessage(list, Object.assign({}, item, { name: next }), label);
+    setFieldError(input, message);
+    if (message) return false;
+    item.name = next;
+    if (onValid) onValid();
+    save();
+    return true;
+  }
+
+  function commitDecimal(input, target, key, label, opts, onValid) {
+    const message = decimalValidation(input.value, label, opts);
+    setFieldError(input, message);
+    if (message) return false;
+    target[key] = Number(input.value);
+    if (onValid) onValid();
+    save();
+    refreshFinancials();
+    return true;
+  }
+
+  function refreshFinancials() {
+    if (!state) return;
+    renderIncome();
+    refreshTotals("expenses");
+    refreshTotals("savings");
+    updateSinkingTotals(false);
+    renderSummary();
+    renderMoneyTrail();
+    renderAdvisor();
+  }
+
+  function notify(message, type) {
+    const region = document.getElementById("toastRegion");
+    if (!region) return;
+    const toast = el("div", { class: "toast" + (type ? " toast--" + type : ""), text: message });
+    region.appendChild(toast);
+    window.setTimeout(() => toast.remove(), 2600);
+  }
+
+  let pendingConfirm = null;
+
+  function openConfirm(title, body, actionLabel, onConfirm) {
+    pendingConfirm = onConfirm;
+    document.getElementById("confirmTitle").textContent = title;
+    document.getElementById("confirmBody").textContent = body;
+    document.getElementById("confirmOkBtn").textContent = actionLabel || "Delete";
+    document.getElementById("confirmModal").hidden = false;
+    document.getElementById("confirmCancelBtn").focus();
+  }
+
+  function closeConfirm() {
+    pendingConfirm = null;
+    document.getElementById("confirmModal").hidden = true;
+  }
+
   /* ---------- State ---------- */
   let root = loadRoot();
   let activeProfile = sessionStorage.getItem(SESSION_PROFILE_KEY) || "";
@@ -294,8 +404,14 @@
     const savActual = sum(state.savings, "actual");
     const income = num(state.income);
     const tithe = income * (num(state.tithePct) / 100);
-    const leftover = income - tithe - expActual - savActual;
-    return { income, tithe, expBudgeted, expActual, savBudgeted, savActual, leftover };
+    const sinkingPlanned = state.sinkingFunds.reduce((total, f) => total + sinkingMonthly(f), 0);
+    const plannedCommitments = tithe + expBudgeted + savBudgeted + sinkingPlanned;
+    const actualSpending = expActual;
+    const remainingBudget = expBudgeted - expActual;
+    const actualCashRemaining = income - tithe - expActual - savActual;
+    const unallocatedIncome = income - plannedCommitments;
+    const safeToSpend = Math.max(Math.min(actualCashRemaining, unallocatedIncome), 0);
+    return { income, tithe, expBudgeted, expActual, savBudgeted, savActual, sinkingPlanned, plannedCommitments, actualSpending, remainingBudget, actualCashRemaining, unallocatedIncome, safeToSpend, leftover: actualCashRemaining };
   }
 
   /* ---------- Renderers ---------- */
@@ -326,23 +442,60 @@
     const nameInput = el("input", {
       class: "cell-input cell-input--name editable", type: "text", value: item.name,
       "aria-label": "Category name",
-      oninput: (e) => { item.name = e.target.value; save(); },
+      oninput: (e) => {
+        const oldName = item.name;
+        commitName(e.target, state[listKey], item, listKey === "expenses" ? "Expense category" : "Savings category", () => {
+          if (listKey === "expenses") {
+            state.transactions.forEach((tx) => { if (tx.category === oldName) tx.category = cleanName(e.target.value); });
+            renderTransactions();
+          }
+        });
+        refreshFinancials();
+      },
     });
     const budgeted = el("input", {
       class: "cell-input cell-input--num editable", type: "number", inputmode: "decimal",
       min: "0", step: "0.01", value: item.budgeted || "", placeholder: "0.00", "aria-label": "Budgeted",
-      oninput: (e) => { item.budgeted = num(e.target.value); save(); refreshTotals(listKey); renderSummary(); },
+      oninput: (e) => {
+        const message = decimalValidation(e.target.value, "Budgeted amount");
+        if (message) { setFieldError(e.target, message); return; }
+        const next = Number(e.target.value);
+        const current = num(item.budgeted);
+        const planned = (listKey === "expenses" ? sum(state.expenses, "budgeted") : sum(state.savings, "budgeted")) - current + next;
+        if (state.income > 0 && planned > state.income) {
+          setFieldError(e.target, `${listKey === "expenses" ? "Expense budgets" : "Savings allocations"} cannot be larger than monthly income.`);
+          return;
+        }
+        if (listKey === "savings") {
+          const availableForSavings = Math.max(num(state.income) - totals().tithe - sum(state.expenses, "budgeted"), 0);
+          if (planned > availableForSavings) {
+            setFieldError(e.target, `Savings allocations cannot be larger than available income (${money(availableForSavings)} after giving and expense budgets).`);
+            return;
+          }
+        }
+        item.budgeted = next;
+        setFieldError(e.target, "");
+        save();
+        refreshFinancials();
+      },
     });
     const actual = el("input", {
       class: "cell-input cell-input--num editable", type: "number", inputmode: "decimal",
       min: "0", step: "0.01", value: item.actual || "", placeholder: "0.00", "aria-label": "Actual",
-      oninput: (e) => { item.actual = num(e.target.value); save(); refreshTotals(listKey); renderSummary(); renderMoneyTrail(); },
+      oninput: (e) => { commitDecimal(e.target, item, "actual", "Actual amount"); },
     });
     const del = el("button", {
       class: "btn btn--icon", type: "button", title: "Remove", "aria-label": "Remove category",
       onclick: () => {
-        state[listKey] = state[listKey].filter((x) => x.id !== item.id);
-        save(); renderAll();
+        const txCount = listKey === "expenses" ? (state.transactions || []).filter((tx) => tx.category === item.name).length : 0;
+        const detail = txCount ? ` It has ${txCount} linked transaction${txCount === 1 ? "" : "s"}; those transactions will stay in the log as uncategorised history.` : " This will update totals immediately.";
+        openConfirm(`Delete ${item.name || "this category"}?`, `This will delete the ${listKey === "expenses" ? "expense" : "savings"} category and remove it from budget calculations.${detail}`, "Delete", () => {
+          state[listKey] = state[listKey].filter((x) => x.id !== item.id);
+          if (listKey === "expenses") {
+            state.transactions.forEach((tx) => { if (tx.category === item.name) tx.category = ""; });
+          }
+          save(); renderAll(); notify(`${listKey === "expenses" ? "Expense" : "Savings category"} deleted`);
+        });
       },
     }, ["✕"]);
 
@@ -399,22 +552,24 @@
 
   function renderSummary() {
     const t = totals();
-    const plannedCommitments = t.tithe + t.expBudgeted + t.savBudgeted + state.sinkingFunds.reduce((total, f) => total + sinkingMonthly(f), 0);
     document.getElementById("sumIncome").textContent = money(t.income);
-    document.getElementById("sumPlannedCommitments").textContent = money(plannedCommitments);
+    document.getElementById("sumPlannedCommitments").textContent = money(t.plannedCommitments);
     document.getElementById("sumTithe").textContent = money(t.tithe);
-    document.getElementById("sumExpenses").textContent = money(t.expActual);
+    document.getElementById("sumExpenses").textContent = money(t.actualSpending);
     document.getElementById("sumSavings").textContent = money(t.savActual);
+    document.getElementById("sumRemainingBudget").textContent = money(t.remainingBudget);
+    document.getElementById("sumActualCashRemaining").textContent = money(t.actualCashRemaining);
+    document.getElementById("sumUnallocatedIncome").textContent = money(t.unallocatedIncome);
 
     const lo = document.getElementById("sumLeftover");
-    lo.textContent = money(t.leftover);
+    lo.textContent = money(t.safeToSpend);
     const loStat = document.getElementById("leftoverStat");
     loStat.classList.remove("pos-bg", "neg-bg");
-    loStat.classList.add(t.leftover < 0 ? "neg-bg" : "pos-bg");
+    loStat.classList.add(t.unallocatedIncome < 0 ? "neg-bg" : "pos-bg");
 
     const sticky = document.getElementById("stickyLeftover");
-    sticky.textContent = money(t.leftover);
-    sticky.className = "sticky-bar__value " + (t.leftover < 0 ? "neg" : "pos");
+    sticky.textContent = money(t.safeToSpend);
+    sticky.className = "sticky-bar__value " + (t.unallocatedIncome < 0 ? "neg" : "pos");
 
     renderBreakdownChart(t);
     renderMoneyTrail();
@@ -543,7 +698,12 @@
   function makeTransactionRow(tx) {
     const date = el("input", {
       class: "cell-input editable", type: "date", value: tx.date || todayISO(), "aria-label": "Date",
-      oninput: (e) => { tx.date = e.target.value; save(); },
+      oninput: (e) => {
+        const message = e.target.value && !Number.isNaN(new Date(e.target.value).getTime()) ? "" : "Transaction date is required.";
+        setFieldError(e.target, message);
+        if (message) return;
+        tx.date = e.target.value; save();
+      },
     });
     const category = el("select", {
       class: "cell-input editable", "aria-label": "Category",
@@ -557,11 +717,16 @@
     const amount = el("input", {
       class: "cell-input cell-input--num editable", type: "number", inputmode: "decimal",
       min: "0", step: "0.01", value: tx.amount || "", placeholder: "0.00", "aria-label": "Amount",
-      oninput: (e) => { tx.amount = num(e.target.value); save(); renderTransactions(); renderExpenses(); renderSummary(); },
+      oninput: (e) => { commitDecimal(e.target, tx, "amount", "Transaction amount", {}, () => { renderTransactions(); renderExpenses(); }); },
     });
     const del = el("button", {
       class: "btn btn--icon", type: "button", title: "Remove spend", "aria-label": "Remove spend",
-      onclick: () => { state.transactions = state.transactions.filter((x) => x.id !== tx.id); save(); renderTransactions(); renderExpenses(); renderSummary(); },
+      onclick: () => {
+        openConfirm("Delete transaction?", `This will delete ${money(tx.amount)} from ${tx.category || "uncategorised spending"} and update actual spending immediately.`, "Delete", () => {
+          state.transactions = state.transactions.filter((x) => x.id !== tx.id);
+          save(); renderTransactions(); renderExpenses(); renderSummary(); notify("Transaction deleted");
+        });
+      },
     }, ["✕"]);
     return el("tr", {}, [
       el("td", { class: "col-date", "data-label": "Date" }, [date]),
@@ -575,7 +740,7 @@
   function categoryOptions(current) {
     const names = state.expenses.map((exp) => exp.name).filter(Boolean);
     if (current && !names.includes(current)) names.unshift(current);
-    return names.map((name) => el("option", { value: name, text: name }));
+    return [el("option", { value: "", text: "Uncategorised" })].concat(names.map((name) => el("option", { value: name, text: name })));
   }
 
   /* ---------- Goals ---------- */
@@ -606,11 +771,18 @@
 
     const name = el("input", {
       class: "goal__name editable", type: "text", value: g.name, "aria-label": "Goal name",
-      oninput: (e) => { g.name = e.target.value; save(); renderAdvisor(); },
+      oninput: (e) => {
+        commitName(e.target, state.goals, g, "Savings goal", () => { renderAdvisor(); });
+      },
     });
     const del = el("button", {
       class: "btn btn--icon", type: "button", title: "Remove goal", "aria-label": "Remove goal",
-      onclick: () => { state.goals = state.goals.filter((x) => x.id !== g.id); save(); renderGoals(); },
+      onclick: () => {
+        openConfirm(`Delete ${g.name || "this savings goal"}?`, "This will remove the goal, its target, current saved amount, monthly contribution, and progress calculation.", "Delete", () => {
+          state.goals = state.goals.filter((x) => x.id !== g.id);
+          save(); renderGoals(); renderAdvisor(); notify("Savings goal deleted");
+        });
+      },
     }, ["✕"]);
 
     function moneyField(label, key) {
@@ -621,7 +793,22 @@
           el("input", {
             class: "input input--money editable", type: "number", inputmode: "decimal",
             min: "0", step: "0.01", value: g[key] || "", placeholder: "0.00", "aria-label": label,
-            oninput: (e) => { g[key] = num(e.target.value); save(); refreshGoalCard(g, card); renderAdvisor(); },
+            oninput: (e) => {
+              const message = decimalValidation(e.target.value, label);
+              if (message) { setFieldError(e.target, message); return; }
+              const next = Number(e.target.value);
+              if (key === "current" && num(g.target) > 0 && next > num(g.target)) {
+                setFieldError(e.target, "Current saved cannot be higher than the target.");
+                return;
+              }
+              if (key === "target" && next > 0 && num(g.current) > next) {
+                setFieldError(e.target, "Target cannot be lower than the amount already saved.");
+                return;
+              }
+              g[key] = next;
+              setFieldError(e.target, "");
+              save(); refreshGoalCard(g, card); renderAdvisor(); renderSummary();
+            },
           }),
         ]),
       ]);
@@ -702,23 +889,49 @@
       return el("input", Object.assign({
         class: "cell-input editable", value: d[key] || "",
         oninput: (e) => {
-          d[key] = opts.text ? e.target.value : num(e.target.value);
+          if (opts.text) {
+            const name = cleanName(e.target.value);
+            setFieldError(e.target, name ? "" : "Debt name is required.");
+            if (!name) return;
+            d[key] = name;
+          } else {
+            const message = decimalValidation(e.target.value, opts.label || "Amount", { max: key === "apr" ? 100 : 999999999 });
+            if (message) { setFieldError(e.target, message); return; }
+            const next = Number(e.target.value);
+            if (key === "payment" && num(d.balance) > 0 && next > num(d.balance)) {
+              setFieldError(e.target, "Monthly payment cannot be higher than the outstanding balance.");
+              return;
+            }
+            if (key === "balance" && next === 0) d.payment = 0;
+            if (key === "balance" && num(d.payment) > next) {
+              setFieldError(e.target, "Balance cannot be lower than the monthly payment already entered.");
+              return;
+            }
+            d[key] = next;
+            setFieldError(e.target, "");
+          }
           save();
           payoffCell.textContent = payoffText(d);
           payoffCell.className = "col-num cell-calc " + payoffClass(d);
           renderAdvisor();
+          if (key === "balance" && num(d.balance) === 0) renderDebts();
         },
       }, opts.attrs));
     }
     const name = input("name", { text: true, attrs: { type: "text", class: "cell-input cell-input--name editable", placeholder: "Card / loan", "aria-label": "Debt name" } });
-    const balance = input("balance", { attrs: { type: "number", inputmode: "decimal", min: "0", step: "0.01", class: "cell-input cell-input--num editable", placeholder: "0.00", "aria-label": "Balance" } });
-    const apr = input("apr", { attrs: { type: "number", inputmode: "decimal", min: "0", step: "0.1", class: "cell-input cell-input--num editable", placeholder: "0", "aria-label": "APR" } });
-    const payment = input("payment", { attrs: { type: "number", inputmode: "decimal", min: "0", step: "0.01", class: "cell-input cell-input--num editable", placeholder: "0.00", "aria-label": "Monthly payment" } });
+    const balance = input("balance", { label: "Balance", attrs: { type: "number", inputmode: "decimal", min: "0", step: "0.01", class: "cell-input cell-input--num editable", placeholder: "0.00", "aria-label": "Balance" } });
+    const apr = input("apr", { label: "APR", attrs: { type: "number", inputmode: "decimal", min: "0", step: "0.1", class: "cell-input cell-input--num editable", placeholder: "0", "aria-label": "APR" } });
+    const payment = input("payment", { label: "Monthly payment", attrs: { type: "number", inputmode: "decimal", min: "0", step: "0.01", class: "cell-input cell-input--num editable", placeholder: "0.00", "aria-label": "Monthly payment" } });
 
     const payoffCell = el("td", { class: "col-num cell-calc " + payoffClass(d), "data-label": "Payoff" }, [payoffText(d)]);
     const del = el("button", {
       class: "btn btn--icon", type: "button", title: "Remove debt", "aria-label": "Remove debt",
-      onclick: () => { state.debts = state.debts.filter((x) => x.id !== d.id); save(); renderDebts(); },
+      onclick: () => {
+        openConfirm(`Delete ${d.name || "this debt"}?`, `This will remove the ${money(d.balance)} balance and its payoff calculation from the debt tracker.`, "Delete", () => {
+          state.debts = state.debts.filter((x) => x.id !== d.id);
+          save(); renderDebts(); renderAdvisor(); notify("Debt deleted");
+        });
+      },
     }, ["✕"]);
 
     return el("tr", {}, [
@@ -756,10 +969,10 @@
     return remaining / monthsUntil(f.date);
   }
 
-  function updateSinkingTotals() {
+  function updateSinkingTotals(refreshAdvisor = true) {
     const totalEl = document.getElementById("sinkingMonthlyTotal");
     if (totalEl) totalEl.textContent = money(state.sinkingFunds.reduce((tt, f) => tt + sinkingMonthly(f), 0));
-    renderAdvisor();
+    if (refreshAdvisor) renderAdvisor();
   }
 
   function renderSinking() {
@@ -779,29 +992,59 @@
     const name = el("input", {
       class: "cell-input cell-input--name editable", type: "text", value: f.name,
       placeholder: "e.g. Germany trip", "aria-label": "Fund name",
-      oninput: (e) => { f.name = e.target.value; save(); },
+      oninput: (e) => { commitName(e.target, state.sinkingFunds, f, "Sinking fund"); },
     });
     const cost = el("input", {
       class: "cell-input cell-input--num editable", type: "number", inputmode: "decimal",
       min: "0", step: "0.01", value: f.cost || "", placeholder: "0.00", "aria-label": "Total cost",
-      oninput: (e) => { f.cost = num(e.target.value); onEdit(); },
+      oninput: (e) => { commitDecimal(e.target, f, "cost", "Total cost", {}, onEdit); },
     });
     const saved = el("input", {
       class: "cell-input cell-input--num editable", type: "number", inputmode: "decimal",
       min: "0", step: "0.01", value: f.saved || "", placeholder: "0.00", "aria-label": "Saved so far",
-      oninput: (e) => { f.saved = num(e.target.value); onEdit(); },
+      oninput: (e) => {
+        const message = decimalValidation(e.target.value, "Saved so far");
+        if (message) { setFieldError(e.target, message); return; }
+        const next = Number(e.target.value);
+        if (num(f.cost) > 0 && next > num(f.cost)) {
+          setFieldError(e.target, "Saved so far cannot be higher than the total cost.");
+          return;
+        }
+        f.saved = next; setFieldError(e.target, ""); onEdit();
+      },
     });
     const start = el("input", {
       class: "cell-input editable", type: "month", value: f.start || "", "aria-label": "Start saving from",
-      oninput: (e) => { f.start = e.target.value; onEdit(); },
+      oninput: (e) => {
+        const message = monthValidation(e.target.value, "Start month", { required: false, allowPast: true });
+        if (message) { setFieldError(e.target, message); return; }
+        if (f.date && e.target.value && e.target.value > f.date) {
+          setFieldError(e.target, "Start month cannot be after the target month.");
+          return;
+        }
+        f.start = e.target.value; setFieldError(e.target, ""); onEdit();
+      },
     });
     const date = el("input", {
       class: "cell-input editable", type: "month", value: f.date || "", "aria-label": "Needed by",
-      oninput: (e) => { f.date = e.target.value; onEdit(); },
+      oninput: (e) => {
+        const message = monthValidation(e.target.value, "Target month", { required: true, allowPast: false });
+        if (message) { setFieldError(e.target, message); return; }
+        if (f.start && f.start > e.target.value) {
+          setFieldError(e.target, "Target month cannot be before the start month.");
+          return;
+        }
+        f.date = e.target.value; setFieldError(e.target, ""); onEdit();
+      },
     });
     const del = el("button", {
       class: "btn btn--icon", type: "button", title: "Remove fund", "aria-label": "Remove fund",
-      onclick: () => { state.sinkingFunds = state.sinkingFunds.filter((x) => x.id !== f.id); save(); renderSinking(); },
+      onclick: () => {
+        openConfirm(`Delete ${f.name || "this sinking fund"}?`, `This will remove its ${money(sinkingMonthly(f))} monthly set-aside from planned commitments.`, "Delete", () => {
+          state.sinkingFunds = state.sinkingFunds.filter((x) => x.id !== f.id);
+          save(); renderSinking(); renderSummary(); notify("Sinking fund deleted");
+        });
+      },
     }, ["✕"]);
     return el("tr", {}, [
       el("td", { class: "col-name", "data-label": "Fund" }, [name]),
@@ -934,7 +1177,12 @@
     state.history.forEach((h) => {
       const del = el("button", {
         class: "btn btn--icon", type: "button", title: "Delete snapshot", "aria-label": "Delete snapshot",
-        onclick: () => { state.history = state.history.filter((x) => x.id !== h.id); save(); renderHistory(); },
+        onclick: () => {
+          openConfirm(`Delete ${h.label} snapshot?`, "This will remove this saved month from the history chart and trend table.", "Delete", () => {
+            state.history = state.history.filter((x) => x.id !== h.id);
+            save(); renderHistory(); renderAdvisor(); notify("Snapshot deleted");
+          });
+        },
       }, ["✕"]);
       body.appendChild(el("tr", {}, [
         el("td", { class: "col-name", "data-label": "Month", text: h.label }),
@@ -1009,17 +1257,18 @@
   /* ---------- Actions ---------- */
   function addRow(listKey) {
     if (listKey === "expenses" || listKey === "savings") {
-      state[listKey].push({ id: uid(), name: "New category", budgeted: 0, actual: 0 });
-      save(); (listKey === "expenses" ? renderExpenses : renderSavings)();
+      state[listKey].push({ id: uid(), name: uniqueName(state[listKey], "New category"), budgeted: 0, actual: 0 });
+      save(); (listKey === "expenses" ? renderExpenses : renderSavings)(); renderSummary();
+      notify(listKey === "expenses" ? "Expense added" : "Savings category added");
     } else if (listKey === "goals") {
-      state.goals.push({ id: uid(), name: "New goal", target: 0, current: 0, monthly: 0 });
-      save(); renderGoals();
+      state.goals.push({ id: uid(), name: uniqueName(state.goals, "New goal"), target: 0, current: 0, monthly: 0 });
+      save(); renderGoals(); notify("Savings goal added");
     } else if (listKey === "debts") {
-      state.debts.push({ id: uid(), name: "", balance: 0, apr: 0, payment: 0 });
-      save(); renderDebts();
+      state.debts.push({ id: uid(), name: uniqueName(state.debts, "New debt"), balance: 0, apr: 0, payment: 0 });
+      save(); renderDebts(); notify("Debt added");
     } else if (listKey === "sinking") {
-      state.sinkingFunds.push({ id: uid(), name: "New fund", cost: 0, saved: 0, date: nextMonthISO() });
-      save(); renderSinking();
+      state.sinkingFunds.push({ id: uid(), name: uniqueName(state.sinkingFunds, "New fund"), cost: 0, saved: 0, start: "", date: nextMonthISO() });
+      save(); renderSinking(); renderSummary(); notify("Sinking fund added");
     } else if (listKey === "transactions") {
       state.transactions.push({
         id: uid(),
@@ -1028,7 +1277,7 @@
         note: "",
         amount: 0,
       });
-      save(); renderTransactions(); renderSummary();
+      save(); renderTransactions(); renderSummary(); notify("Expense added");
     }
   }
 
@@ -1045,27 +1294,56 @@
     else state.history.push(snap);
     save();
     renderHistory();
+    notify("Budget snapshot saved");
   }
 
   function resetAll() {
-    if (!confirm(`Reset ${PROFILES[activeProfile].label}'s data back to defaults? This cannot be undone.`)) return;
-    state = defaultsFor(activeProfile);
-    save();
-    renderAll();
+    openConfirm(`Reset ${PROFILES[activeProfile].label}'s data?`, "This will restore this profile to the default budget and delete its current categories, goals, transactions, debts, sinking funds, and history.", "Reset", () => {
+      state = defaultsFor(activeProfile);
+      save();
+      renderAll();
+      notify("Budget reset");
+    });
   }
 
   /* ---------- Wiring ---------- */
   document.getElementById("incomeInput").addEventListener("input", (e) => {
-    state.income = num(e.target.value); save(); renderIncome(); renderSummary();
+    const message = decimalValidation(e.target.value, "Monthly income");
+    if (message) { setFieldError(e.target, message); return; }
+    const next = Number(e.target.value);
+    const existingCommitments = totals().tithe + sum(state.expenses, "budgeted") + sum(state.savings, "budgeted") + state.sinkingFunds.reduce((total, f) => total + sinkingMonthly(f), 0);
+    const currentTithe = state.income * (num(state.tithePct) / 100);
+    const projectedCommitments = existingCommitments - currentTithe + (next * (num(state.tithePct) / 100));
+    if (next > 0 && projectedCommitments > next) {
+      setFieldError(e.target, `Monthly income cannot be lower than planned commitments (${money(projectedCommitments)}).`);
+      return;
+    }
+    state.income = next;
+    setFieldError(e.target, "");
+    save(); renderIncome(); renderSummary();
   });
   document.getElementById("titheInput").addEventListener("input", (e) => {
-    state.tithePct = num(e.target.value); save(); renderIncome(); renderSummary();
+    const message = decimalValidation(e.target.value, "Tithe percentage", { max: 100 });
+    if (message) { setFieldError(e.target, message); return; }
+    state.tithePct = Number(e.target.value);
+    setFieldError(e.target, "");
+    save(); renderIncome(); renderSummary();
   });
   document.getElementById("bufferInput").addEventListener("input", (e) => {
-    state.emergencyMonths = num(e.target.value); save(); renderAdvisor();
+    const message = decimalValidation(e.target.value, "Safety buffer", { max: 12 });
+    if (message) { setFieldError(e.target, message); return; }
+    state.emergencyMonths = Number(e.target.value); setFieldError(e.target, ""); save(); renderAdvisor();
   });
   document.getElementById("savingsTargetInput").addEventListener("input", (e) => {
-    state.monthlySavingsTarget = num(e.target.value); save(); renderAdvisor();
+    const message = decimalValidation(e.target.value, "Monthly savings target");
+    if (message) { setFieldError(e.target, message); return; }
+    const next = Number(e.target.value);
+    const available = Math.max(num(state.income) - totals().tithe - sum(state.expenses, "budgeted"), 0);
+    if (next > available) {
+      setFieldError(e.target, `Monthly savings target cannot exceed available income (${money(available)}).`);
+      return;
+    }
+    state.monthlySavingsTarget = next; setFieldError(e.target, ""); save(); renderAdvisor(); renderSummary();
   });
   document.querySelectorAll("[data-add]").forEach((btn) => {
     btn.addEventListener("click", () => addRow(btn.getAttribute("data-add")));
@@ -1091,6 +1369,15 @@
     activeProfile = "";
     state = null;
     showAuth();
+  });
+  document.getElementById("confirmCancelBtn").addEventListener("click", closeConfirm);
+  document.getElementById("confirmModal").addEventListener("click", (e) => {
+    if (e.target.id === "confirmModal") closeConfirm();
+  });
+  document.getElementById("confirmOkBtn").addEventListener("click", () => {
+    const action = pendingConfirm;
+    closeConfirm();
+    if (action) action();
   });
 
   if (activeProfile && root.profiles && root.profiles[activeProfile] && root.profiles[activeProfile].passHash) {

@@ -305,6 +305,18 @@
           <span class="stat__label">Savings (actual)</span>
           <span class="stat__value" id="sumSavings">£0.00</span>
         </div>
+        <div class="stat">
+          <span class="stat__label">Remaining Budget</span>
+          <span class="stat__value" id="sumRemainingBudget">£0.00</span>
+        </div>
+        <div class="stat">
+          <span class="stat__label">Actual Cash Remaining</span>
+          <span class="stat__value" id="sumActualCashRemaining">£0.00</span>
+        </div>
+        <div class="stat">
+          <span class="stat__label">Unallocated Income</span>
+          <span class="stat__value" id="sumUnallocatedIncome">£0.00</span>
+        </div>
       </div>
       <div class="chart-block">
         <h4 class="chart-title">Where the money went</h4>
@@ -403,6 +415,19 @@
       <span class="sticky-bar__value" id="stickyLeftover">£0.00</span>
     </div>
   </div>
+  </div>
+
+  <div class="toast-region" id="toastRegion" aria-live="polite" aria-atomic="true"></div>
+
+  <div class="modal-backdrop" id="confirmModal" hidden>
+    <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmBody">
+      <h2 id="confirmTitle">Confirm change</h2>
+      <p id="confirmBody"></p>
+      <div class="confirm-actions">
+        <button class="btn" id="confirmCancelBtn" type="button">Cancel</button>
+        <button class="btn btn--danger" id="confirmOkBtn" type="button">Delete</button>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>
