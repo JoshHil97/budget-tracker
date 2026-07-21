@@ -7,6 +7,10 @@
   const ROOT_KEY = "budget-savings-app.profiles.v2";
   const SESSION_PROFILE_KEY = "budget-savings-app.activeProfile";
   const DATA_VERSION = 3;
+  const BACKUP_FORMAT = "budget-tracker-backup";
+  const BACKUP_FORMAT_VERSION = 1;
+  const RECOVERY_KEY = "budget-savings-app.recovery.latest";
+  const MAX_IMPORT_BYTES = 5 * 1024 * 1024; // Local budget files should be small; reject huge files before parsing to protect the browser.
 
   /* ---------- Defaults ---------- */
   const DEFAULT_STATE = {
@@ -431,8 +435,15 @@
   }
 
   function saveRoot() {
-    try { localStorage.setItem(ROOT_KEY, JSON.stringify(root)); }
-    catch (e) { console.warn("Failed to save profiles", e); }
+    try {
+      localStorage.setItem(ROOT_KEY, JSON.stringify(root));
+      return true;
+    } catch (e) {
+      console.warn("Failed to save profiles", e);
+      setDataStatus("Browser storage is full or unavailable. Download a backup before making more changes.", "neg");
+      notify("Data could not be saved", "bad");
+      return false;
+    }
   }
 
   function save() {
@@ -632,7 +643,34 @@
     return root.profiles[profileId];
   }
 
+  function profileMeta(profileId) {
+    return (PROFILES[profileId]) || {
+      label: profileName(profileId),
+      subtitle: "Imported private budget room.",
+    };
+  }
+
+  function renderProfileButtons() {
+    const grid = document.querySelector(".profile-grid");
+    if (!grid) return;
+    const ids = Object.keys(root.profiles || {});
+    const ordered = Object.keys(PROFILES).concat(ids.filter((id) => !PROFILES[id]));
+    grid.textContent = "";
+    ordered.forEach((id) => {
+      const meta = profileMeta(id);
+      grid.appendChild(el("button", {
+        class: "profile-card" + (id === "ayo" ? " profile-card--ayo" : ""),
+        type: "button",
+        "data-profile-login": id,
+      }, [
+        el("span", { class: "profile-card__name", text: meta.label }),
+        el("span", { class: "profile-card__sub", text: meta.subtitle }),
+      ]));
+    });
+  }
+
   function showAuth() {
+    renderProfileButtons();
     document.getElementById("authScreen").hidden = false;
     document.getElementById("appShell").hidden = true;
     document.getElementById("authForm").hidden = true;
@@ -648,7 +686,7 @@
     saveRoot();
     document.getElementById("authScreen").hidden = true;
     document.getElementById("appShell").hidden = false;
-    document.getElementById("profileSubtitle").textContent = PROFILES[profileId].subtitle;
+    document.getElementById("profileSubtitle").textContent = profileMeta(profileId).subtitle;
     renderAll();
   }
 
@@ -656,7 +694,7 @@
     pendingProfile = profileId;
     const record = profileRecord(profileId);
     document.getElementById("authForm").hidden = false;
-    document.getElementById("authProfileName").textContent = PROFILES[profileId].label;
+    document.getElementById("authProfileName").textContent = profileMeta(profileId).label;
     document.getElementById("authPassLabel").textContent = record.passHash ? "Passcode" : "Create passcode";
     document.getElementById("authSubmitBtn").textContent = record.passHash ? "Unlock" : "Create & unlock";
     document.getElementById("authNote").textContent = "";
@@ -777,6 +815,7 @@
   /* ---------- Renderers ---------- */
   function renderAll() {
     renderMonthPanel();
+    renderDataManagement();
     renderOnboarding();
     renderRecurring();
     renderIncome();
@@ -2959,8 +2998,573 @@
     });
   }
 
+  /* ---------- Data backup, restore and CSV portability ---------- */
+  let pendingDataAction = null;
+
+  function profileName(profileId) {
+    return (PROFILES[profileId] && PROFILES[profileId].label) || profileId || "Profile";
+  }
+
+  function profileStats(profileId, record) {
+    const rec = record || profileRecord(profileId);
+    const months = Object.values(rec.months || {});
+    return {
+      profiles: 1,
+      months: months.length,
+      transactions: months.reduce((acc, m) => acc + (m.transactions || []).length, 0),
+      recurring: (rec.recurringItems || []).length,
+      goals: months.reduce((acc, m) => acc + (m.goals || []).length, 0),
+      sinking: months.reduce((acc, m) => acc + (m.sinkingFunds || []).length, 0),
+      debts: months.reduce((acc, m) => acc + (m.debts || []).length, 0),
+      range: monthRange(Object.keys(rec.months || {})),
+    };
+  }
+
+  function monthRange(ids) {
+    const valid = ids.filter(validMonthId).sort();
+    if (!valid.length) return "No months";
+    return valid[0] === valid[valid.length - 1] ? monthLabel(valid[0]) : `${monthLabel(valid[0])} to ${monthLabel(valid[valid.length - 1])}`;
+  }
+
+  function renderDataManagement() {
+    const summary = document.getElementById("dataSummary");
+    if (!summary || !activeProfile) return;
+    const record = activeRecord();
+    const stats = profileStats(activeProfile, record);
+    let recovery = null;
+    try { recovery = JSON.parse(localStorage.getItem(RECOVERY_KEY) || "null"); } catch (e) { recovery = null; }
+    summary.textContent = "";
+    [
+      ["Active profile", profileName(activeProfile)],
+      ["Monthly records", String(stats.months)],
+      ["Transactions", String(stats.transactions)],
+      ["Last backup", record.lastBackupAt ? new Date(record.lastBackupAt).toLocaleString("en-GB") : "No backup downloaded yet"],
+      ["Data version", String(record.dataVersion || DATA_VERSION)],
+      ["Recovery point", recovery ? new Date(recovery.createdAt).toLocaleString("en-GB") : "None"],
+    ].forEach(([label, value]) => summary.appendChild(el("div", { class: "data-summary__item" }, [
+      el("span", { class: "data-summary__label", text: label }),
+      el("strong", { class: "data-summary__value", text: value }),
+    ])));
+  }
+
+  function setDataStatus(message, type) {
+    const node = document.getElementById("dataStatus");
+    if (!node) return;
+    node.textContent = message || "";
+    node.className = "data-status" + (type ? " " + type : "");
+  }
+
+  function safeClone(value) {
+    return JSON.parse(JSON.stringify(value, finiteReplacer));
+  }
+
+  function finiteReplacer(key, value) {
+    if (typeof value === "number" && !Number.isFinite(value)) throw new Error(`Invalid number at ${key || "root"}.`);
+    if (typeof value === "function") throw new Error(`Unsupported function at ${key || "root"}.`);
+    return value;
+  }
+
+  function validateProfileData(record, label) {
+    const errors = [];
+    if (!record || typeof record !== "object") errors.push(`${label}: profile data is missing.`);
+    const months = record && record.months;
+    if (!months || typeof months !== "object" || Array.isArray(months)) errors.push(`${label}: monthly records are missing.`);
+    Object.entries(months || {}).forEach(([monthId, month]) => {
+      if (!validMonthId(monthId)) errors.push(`${label}: ${monthId} is not a valid month ID.`);
+      if (!month || typeof month !== "object" || Array.isArray(month)) errors.push(`${label}: ${monthId} is not a valid monthly record.`);
+      ["expenses", "savings", "goals", "debts", "sinkingFunds", "transactions", "history"].forEach((key) => {
+        if (month && month[key] != null && !Array.isArray(month[key])) errors.push(`${label}: ${monthId} ${key} must be a list.`);
+      });
+    });
+    try { JSON.stringify(record, finiteReplacer); } catch (e) { errors.push(`${label}: ${e.message}`); }
+    return errors;
+  }
+
+  function createBackupEnvelope(scope) {
+    if (!activeProfile || !root.profiles[activeProfile]) throw new Error("The active profile could not be found.");
+    save();
+    const selectedProfiles = scope === "all" ? root.profiles : { [activeProfile]: profileRecord(activeProfile) };
+    Object.entries(selectedProfiles).forEach(([id, rec]) => {
+      selectedProfiles[id] = migrateProfileRecord(rec, id);
+      const errors = validateProfileData(selectedProfiles[id], profileName(id));
+      if (errors.length) throw new Error(errors[0]);
+    });
+    return {
+      format: BACKUP_FORMAT,
+      formatVersion: BACKUP_FORMAT_VERSION,
+      exportedAt: new Date().toISOString(),
+      appVersion: "local-vanilla",
+      scope: scope === "all" ? "all-profiles" : "current-profile",
+      metadata: {
+        dataVersion: DATA_VERSION,
+        profileCount: Object.keys(selectedProfiles).length,
+        activeProfile,
+        activeMonth,
+      },
+      profiles: safeClone(selectedProfiles),
+    };
+  }
+
+  function safeFilename(value) {
+    return cleanName(value).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "profile";
+  }
+
+  function downloadFile(filename, content, mime) {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  function downloadBackup() {
+    const scope = document.getElementById("backupScope").value;
+    const run = () => {
+      try {
+        const envelope = createBackupEnvelope(scope);
+        const date = todayISO();
+        const name = scope === "all" ? "all-profiles" : safeFilename(profileName(activeProfile));
+        const json = JSON.stringify(envelope, null, 2);
+        JSON.parse(json);
+        downloadFile(`budget-tracker-${name}-${date}.json`, json, "application/json");
+        const record = activeRecord();
+        record.lastBackupAt = envelope.exportedAt;
+        saveRoot();
+        renderDataManagement();
+        notify("Backup downloaded");
+        setDataStatus("Backup created. Keep the downloaded JSON file somewhere secure.");
+      } catch (e) {
+        setDataStatus(e.message || "Backup could not be created.", "neg");
+        notify("Backup failed", "bad");
+      }
+    };
+    if (scope === "all") {
+      openConfirm("Export all profiles?", "This downloads every locally stored profile on this browser. The file is not encrypted by the app.", "Download backup", run);
+    } else run();
+  }
+
+  function readFileText(file, kind, onRead) {
+    if (!file) return;
+    if (file.size > MAX_IMPORT_BYTES) {
+      setDataStatus(`${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB. The import limit is 5 MB to protect browser performance.`, "neg");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => onRead(String(reader.result || ""), file);
+    reader.onerror = () => setDataStatus(`${kind} file could not be read.`, "neg");
+    reader.readAsText(file);
+  }
+
+  function validateBackupEnvelope(envelope) {
+    const errors = [], warnings = [];
+    if (!envelope || typeof envelope !== "object") errors.push("Backup file is empty or invalid.");
+    if (envelope && envelope.format !== BACKUP_FORMAT) errors.push("Missing or unsupported backup format identifier.");
+    if (envelope && envelope.formatVersion > BACKUP_FORMAT_VERSION) errors.push("This backup was created by a newer version of the app and cannot be restored safely here.");
+    if (envelope && envelope.formatVersion < BACKUP_FORMAT_VERSION) warnings.push("This older backup will be upgraded during import.");
+    if (!envelope || !envelope.profiles || typeof envelope.profiles !== "object") errors.push("Backup does not contain profile data.");
+    Object.entries((envelope && envelope.profiles) || {}).forEach(([id, rec]) => errors.push(...validateProfileData(rec, profileName(id))));
+    return { valid: !errors.length, errors, warnings };
+  }
+
+  function restorePreview(envelope) {
+    const profileIds = Object.keys(envelope.profiles || {});
+    const stats = profileIds.map((id) => [id, profileStats(id, envelope.profiles[id])]);
+    const rows = stats.map(([id, s]) => ({ profile: profileName(id), months: s.months, transactions: s.transactions, recurring: s.recurring, range: s.range }));
+    return el("div", {}, [
+      el("p", {}, ["Backup exported: ", el("b", { text: envelope.exportedAt ? new Date(envelope.exportedAt).toLocaleString("en-GB") : "Unknown" })]),
+      el("p", {}, ["Format version: ", el("b", { text: String(envelope.formatVersion) }), " · Scope: ", el("b", { text: envelope.scope || "Unknown" })]),
+      renderPreviewTable(["Profile", "Months", "Transactions", "Recurring", "Date range"], rows.map((r) => [r.profile, r.months, r.transactions, r.recurring, r.range])),
+    ]);
+  }
+
+  function renderPreviewTable(headers, rows) {
+    return el("table", { class: "preview-table" }, [
+      el("thead", {}, [el("tr", {}, headers.map((h) => el("th", { text: h })))]),
+      el("tbody", {}, rows.slice(0, 8).map((row) => el("tr", {}, row.map((cell, i) => el("td", { "data-label": headers[i], text: String(cell == null ? "" : cell) }))))),
+    ]);
+  }
+
+  function openDataModal(title, bodyNodes, optionsNodes, confirmText, onConfirm) {
+    pendingDataAction = onConfirm;
+    document.getElementById("dataModalTitle").textContent = title;
+    const body = document.getElementById("dataModalBody");
+    const opts = document.getElementById("dataModalOptions");
+    body.textContent = "";
+    opts.textContent = "";
+    (Array.isArray(bodyNodes) ? bodyNodes : [bodyNodes]).filter(Boolean).forEach((n) => body.appendChild(typeof n === "string" ? el("p", { text: n }) : n));
+    (optionsNodes || []).forEach((n) => opts.appendChild(n));
+    document.getElementById("dataModalConfirmBtn").textContent = confirmText || "Confirm";
+    document.getElementById("dataModal").hidden = false;
+    document.getElementById("dataModalCancelBtn").focus();
+  }
+
+  function closeDataModal() {
+    pendingDataAction = null;
+    document.getElementById("dataModal").hidden = true;
+  }
+
+  function handleBackupFile(file) {
+    if (!file) return;
+    if (!/\.json$/i.test(file.name) && file.type && file.type !== "application/json") {
+      setDataStatus("Choose a JSON backup file.", "neg");
+      return;
+    }
+    readFileText(file, "Backup", (text) => {
+      let envelope;
+      try { envelope = JSON.parse(text); } catch (e) { setDataStatus("That file is not valid JSON.", "neg"); return; }
+      const validation = validateBackupEnvelope(envelope);
+      if (!validation.valid) {
+        openDataModal("Backup cannot be restored", validation.errors.map((msg) => el("p", { text: msg })), [], "Close", closeDataModal);
+        return;
+      }
+      const ids = Object.keys(envelope.profiles || {});
+      const profileSelect = el("label", {}, ["Profile from backup", el("select", { id: "restoreProfileSelect", class: "input" }, ids.map((id) => el("option", { value: id, text: profileName(id) })))]);
+      const strategy = el("label", {}, ["Restore strategy", el("select", { id: "restoreStrategy", class: "input" }, [
+        el("option", { value: "merge-current", text: "Merge into current profile" }),
+        el("option", { value: "replace-current", text: "Replace current profile" }),
+        el("option", { value: "add-new", text: "Add as new local profile record" }),
+        envelope.scope === "all-profiles" ? el("option", { value: "replace-all", text: "Replace all profiles" }) : null,
+      ].filter(Boolean))]);
+      const typed = el("label", {}, ["Type RESTORE to replace a profile, or REPLACE ALL to replace every profile", el("input", { id: "restoreConfirmText", class: "input", type: "text", placeholder: "Required for destructive restores" })]);
+      openDataModal("Review backup restore", [restorePreview(envelope)].concat(validation.warnings.map((w) => el("p", { text: w }))), [profileSelect, strategy, typed], "Apply restore", () => applyRestore(envelope));
+    });
+  }
+
+  function createRecoveryPoint(scope) {
+    try {
+      const payload = { createdAt: new Date().toISOString(), scope: scope || "all", root: safeClone(root) };
+      localStorage.setItem(RECOVERY_KEY, JSON.stringify(payload));
+      return true;
+    } catch (e) {
+      setDataStatus("There is not enough browser storage to create a recovery point safely.", "neg");
+      return false;
+    }
+  }
+
+  function applyRestore(envelope) {
+    try {
+      const strategy = document.getElementById("restoreStrategy").value;
+      const selectedId = document.getElementById("restoreProfileSelect").value;
+      const typed = cleanName(document.getElementById("restoreConfirmText").value).toUpperCase();
+      if ((strategy === "replace-current" && typed !== "RESTORE") || (strategy === "replace-all" && typed !== "REPLACE ALL")) {
+        setDataStatus(strategy === "replace-all" ? "Type REPLACE ALL before replacing every profile." : "Type RESTORE before replacing the current profile.", "neg");
+        return;
+      }
+      if (!createRecoveryPoint(strategy)) return;
+      const nextRoot = safeClone(root);
+      if (strategy === "replace-all") {
+        nextRoot.profiles = safeClone(envelope.profiles);
+      } else if (strategy === "replace-current") {
+        nextRoot.profiles[activeProfile] = safeClone(envelope.profiles[selectedId]);
+        nextRoot.profiles[activeProfile].passHash = root.profiles[activeProfile].passHash;
+      } else if (strategy === "add-new") {
+        const newId = uniqueProfileId(selectedId);
+        nextRoot.profiles[newId] = safeClone(envelope.profiles[selectedId]);
+        nextRoot.profiles[newId].passHash = "";
+      } else {
+        mergeProfile(nextRoot.profiles[activeProfile], envelope.profiles[selectedId]);
+      }
+      Object.entries(nextRoot.profiles || {}).forEach(([id, rec]) => {
+        const errors = validateProfileData(migrateProfileRecord(rec, id), profileName(id));
+        if (errors.length) throw new Error(errors[0]);
+      });
+      root = nextRoot;
+      if (!root.profiles[activeProfile]) activeProfile = Object.keys(root.profiles || {})[0] || "josh";
+      const record = profileRecord(activeProfile);
+      activeMonth = record.activeMonth;
+      state = record.state;
+      saveRoot();
+      closeDataModal();
+      renderAll();
+      notify("Backup restored");
+      setDataStatus("Restore complete. A recent local recovery point was created before the change.");
+    } catch (e) {
+      setDataStatus(e.message || "Restore could not be completed.", "neg");
+      notify("Restore failed", "bad");
+    }
+  }
+
+  function uniqueProfileId(base) {
+    const clean = safeFilename(base || "imported");
+    let id = clean || "imported";
+    let i = 2;
+    while (root.profiles[id]) id = `${clean}-${i++}`;
+    return id;
+  }
+
+  function mergeProfile(target, imported) {
+    target.months = target.months || {};
+    Object.entries(imported.months || {}).forEach(([monthId, month]) => {
+      if (!target.months[monthId]) target.months[monthId] = safeClone(month);
+    });
+    target.recurringItems = mergeById(target.recurringItems || [], imported.recurringItems || []);
+    target.history = mergeById(target.history || [], imported.history || []);
+  }
+
+  function mergeById(existing, incoming) {
+    const ids = new Set(existing.map((item) => item.id).filter(Boolean));
+    const out = existing.slice();
+    incoming.forEach((item) => { if (!item.id || !ids.has(item.id)) out.push(safeClone(item)); });
+    return out;
+  }
+
+  function restoreRecoveryPoint() {
+    let recovery = null;
+    try { recovery = JSON.parse(localStorage.getItem(RECOVERY_KEY) || "null"); } catch (e) { recovery = null; }
+    if (!recovery || !recovery.root) { setDataStatus("No recent local recovery point is available.", "neg"); return; }
+    openConfirm("Restore recent local recovery point?", "This recovery point is stored only in this browser and may be removed if browser storage is cleared.", "Restore", () => {
+      root = recovery.root;
+      if (!root.profiles[activeProfile]) activeProfile = Object.keys(root.profiles || {})[0] || "josh";
+      const record = profileRecord(activeProfile);
+      activeMonth = record.activeMonth;
+      state = record.state;
+      saveRoot();
+      renderAll();
+      notify("Recovery point restored");
+    });
+  }
+
+  function clearRecoveryPoint() {
+    localStorage.removeItem(RECOVERY_KEY);
+    renderDataManagement();
+    setDataStatus("Recent local recovery point removed.");
+  }
+
+  function csvText(rows) {
+    return rows.map((row) => row.map(csvCell).join(",")).join("\n") + "\n";
+  }
+
+  function csvCell(value) {
+    if (typeof value === "number") return Number.isFinite(value) ? String(value) : "";
+    let text = String(value == null ? "" : value);
+    if (/^[=+\-@]/.test(text)) text = "'" + text;
+    return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  }
+
+  function scopedProfileMonths(scope) {
+    const profiles = scope === "all-profiles" ? Object.entries(root.profiles || {}) : [[activeProfile, activeRecord()]];
+    return profiles.flatMap(([profileId, rec]) => Object.entries(rec.months || {})
+      .filter(([monthId]) => scope !== "current-month" || monthId === activeMonth)
+      .map(([monthId, month]) => ({ profileId, rec, monthId, month })));
+  }
+
+  function exportCsv() {
+    const type = document.getElementById("csvExportType").value;
+    const scope = document.getElementById("csvScope").value;
+    const rows = csvRows(type, scope);
+    const filename = `budget-tracker-${type}-${scope}-${todayISO()}.csv`;
+    downloadFile(filename, csvText(rows), "text/csv;charset=utf-8");
+    notify("CSV exported");
+    setDataStatus("CSV exports are for spreadsheets and reporting. Use JSON backup to preserve the complete app structure.");
+  }
+
+  function csvRows(type, scope) {
+    const months = scopedProfileMonths(scope);
+    if (type === "transactions") return [["Transaction ID", "Profile", "Month", "Date", "Description", "Category", "Amount", "Note", "Created date", "Updated date"]].concat(months.flatMap(({ profileId, monthId, month }) => (month.transactions || []).map((tx) => [tx.id, profileName(profileId), monthId, tx.date, tx.note || "", tx.category || "", num(tx.amount), tx.note || "", tx.createdAt || "", tx.updatedAt || ""])));
+    if (type === "monthly-summary") return [["Month ID", "Month label", "Status", "Income", "Planned commitments", "Planned expenses", "Actual spending", "Savings allocations", "Sinking-fund contributions", "Planned debt payments", "Safe to spend", "Remaining budget", "Actual cash remaining", "Unallocated income", "Saved date"]].concat(months.map(({ monthId, month }) => monthSummaryRow(monthId, month)));
+    if (type === "budget-actual") return [["Month", "Category ID", "Category name", "Planned amount", "Actual amount", "Difference", "Status", "Transaction count"]].concat(months.flatMap(({ monthId, month }) => budgetRows(monthId, month)));
+    if (type === "recurring") return [["Profile", "ID", "Type", "Name", "Amount", "Frequency", "Start month", "End month", "Payment day", "Status", "Note"]].concat((scope === "all-profiles" ? Object.entries(root.profiles || {}) : [[activeProfile, activeRecord()]]).flatMap(([profileId, rec]) => (rec.recurringItems || []).map((item) => [profileName(profileId), item.id, item.type, item.name, num(item.amount), item.frequency, item.start, item.end || "", item.day || "", item.status || "active", item.note || ""])));
+    if (type === "goals") return [["Profile", "Goal ID", "Name", "Target amount", "Saved amount", "Remaining amount", "Percentage complete", "Monthly contribution", "Estimated completion", "Status"]].concat(months.flatMap(({ profileId, month }) => (month.goals || []).map((g) => { const c = goalCalc(g); return [profileName(profileId), g.id, g.name, num(g.target), num(g.current), c.remaining, c.pct, num(g.monthly), c.date || "", c.complete ? "Complete" : "Active"]; })));
+    if (type === "sinking") return [["Profile", "Fund ID", "Name", "Target amount", "Saved amount", "Remaining amount", "Start month", "Target month", "Required monthly contribution", "Planned monthly contribution", "Schedule status", "Percentage complete"]].concat(months.flatMap(({ profileId, month }) => (month.sinkingFunds || []).map((f) => { const s = sinkingStatusForMonth(f, month); return [profileName(profileId), f.id, f.name, num(f.cost), num(f.saved), s.progress.remaining, f.start || "", f.date || "", s.requiredMonthly, s.requiredMonthly, s.label, s.progress.pct]; })));
+    return [["Profile", "Debt ID", "Name", "Original balance", "Current balance", "Amount repaid", "Percentage repaid", "APR", "Planned payment", "Estimated payoff", "Status"]].concat(months.flatMap(({ profileId, month }) => (month.debts || []).map((d) => { const original = num(d.originalBalance); const repaid = original > 0 ? Math.max(original - num(d.balance), 0) : ""; return [profileName(profileId), d.id, d.name, original || "", num(d.balance), repaid, original > 0 ? progressData(repaid, original).pct : "", num(d.apr), num(d.payment), payoffText(d), num(d.balance) <= CURRENCY_TOLERANCE ? "Cleared" : "Active"]; })));
+  }
+
+  function monthSummaryRow(monthId, month) {
+    const old = state;
+    state = month;
+    let t;
+    try { t = totals(); }
+    finally { state = old; }
+    const debtPayments = (month.debts || []).reduce((a, d) => a + num(d.payment), 0);
+    return [monthId, monthLabel(monthId), month.status || "draft", t.income, t.plannedCommitments, t.expBudgeted, t.expActual, t.savBudgeted, t.sinkingPlanned, debtPayments, t.safeToSpend, t.remainingBudget, t.actualCashRemaining, t.unallocatedIncome, month.updatedAt || ""];
+  }
+
+  function budgetRows(monthId, month) {
+    const txTotals = (month.transactions || []).reduce((acc, tx) => { const key = tx.category || "Uncategorised"; acc[key] = (acc[key] || 0) + num(tx.amount); return acc; }, {});
+    return (month.expenses || []).map((e) => {
+      const actual = num(e.actual) + num(txTotals[e.name]);
+      const diff = num(e.budgeted) - actual;
+      const txCount = (month.transactions || []).filter((tx) => tx.category === e.name).length;
+      const status = num(e.budgeted) <= CURRENCY_TOLERANCE ? "No planned amount" : diff < -CURRENCY_TOLERANCE ? "Over budget" : diff > CURRENCY_TOLERANCE ? "Under budget" : "On budget";
+      return [monthId, e.id, e.name, num(e.budgeted), actual, diff, status, txCount];
+    });
+  }
+
+  function sinkingStatusForMonth(f, month) {
+    const old = state;
+    state = month;
+    let status;
+    try { status = sinkingStatus(f); }
+    finally { state = old; }
+    return status;
+  }
+
+  function parseCsv(text) {
+    const rows = [];
+    let row = [], cell = "", quoted = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i], next = text[i + 1];
+      if (quoted && ch === '"' && next === '"') { cell += '"'; i++; }
+      else if (ch === '"') quoted = !quoted;
+      else if (!quoted && ch === ",") { row.push(cell); cell = ""; }
+      else if (!quoted && (ch === "\n" || ch === "\r")) {
+        if (ch === "\r" && next === "\n") i++;
+        row.push(cell); rows.push(row); row = []; cell = "";
+      } else cell += ch;
+    }
+    if (cell || row.length) { row.push(cell); rows.push(row); }
+    return rows.filter((r) => r.some((c) => cleanName(c)));
+  }
+
+  function downloadTemplate() {
+    const type = document.getElementById("csvImportType").value;
+    const headers = type === "transactions" ? ["Date", "Description", "Category", "Amount", "Note"]
+      : type === "expense-budgets" ? ["Month", "Category", "Planned amount"]
+        : ["Type", "Name", "Amount", "Frequency", "Start month", "End month", "Payment day", "Note"];
+    downloadFile(`budget-tracker-${type}-template.csv`, csvText([headers]), "text/csv;charset=utf-8");
+  }
+
+  function handleCsvFile(file) {
+    readFileText(file, "CSV", (text) => {
+      const type = document.getElementById("csvImportType").value;
+      const parsed = previewCsvImport(type, parseCsv(text), file.name);
+      if (parsed.errors.length && !parsed.validRows.length) {
+        openDataModal("CSV cannot be imported", parsed.errors.slice(0, 8).map((msg) => el("p", { text: msg })), [], "Close", closeDataModal);
+        return;
+      }
+      const categoryChoice = el("label", {}, ["Unknown categories", el("select", { id: "csvCategoryChoice", class: "input" }, [
+        el("option", { value: "uncategorised", text: "Import as uncategorised" }),
+        el("option", { value: "create", text: "Create missing categories" }),
+        el("option", { value: "skip", text: "Skip affected rows" }),
+      ])]);
+      const duplicateChoice = el("label", {}, ["Likely duplicates", el("select", { id: "csvDuplicateChoice", class: "input" }, [
+        el("option", { value: "skip", text: "Skip likely duplicates" }),
+        el("option", { value: "import", text: "Import them anyway" }),
+      ])]);
+      openDataModal("Review CSV import", csvImportSummary(parsed), [categoryChoice, duplicateChoice], "Import rows", () => applyCsvImport(parsed));
+    });
+  }
+
+  function previewCsvImport(type, rows, filename) {
+    const expected = type === "transactions" ? ["date", "description", "category", "amount", "note"]
+      : type === "expense-budgets" ? ["month", "category", "planned amount"]
+        : ["type", "name", "amount", "frequency", "start month", "end month", "payment day", "note"];
+    const headers = (rows[0] || []).map((h) => cleanName(h).toLowerCase());
+    const errors = [];
+    expected.forEach((h) => { if (!headers.includes(h)) errors.push(`Missing column: ${h}`); });
+    const body = errors.length ? [] : rows.slice(1);
+    const knownCategories = new Set((state.expenses || []).map((e) => cleanName(e.name).toLowerCase()));
+    const validRows = [], invalidRows = [], duplicates = [], unknownCategories = new Set();
+    body.forEach((row, index) => {
+      const item = Object.fromEntries(headers.map((h, i) => [h, cleanName(row[i])]));
+      const line = index + 2;
+      const issue = validateCsvRow(type, item);
+      if (issue) invalidRows.push({ line, issue });
+      else {
+        if (type === "transactions" && item.category && !knownCategories.has(cleanName(item.category).toLowerCase())) unknownCategories.add(item.category);
+        if (type === "transactions" && likelyDuplicateTx(item)) duplicates.push(line);
+        validRows.push({ line, item });
+      }
+    });
+    return { type, filename, errors, validRows, invalidRows, duplicates, unknownCategories: Array.from(unknownCategories) };
+  }
+
+  function validateCsvRow(type, item) {
+    if (type === "transactions") {
+      if (!isValidISODate(item.date)) return "Invalid date.";
+      if (!item.description) return "Description is required.";
+      return decimalValidation(item.amount, "Amount");
+    }
+    if (type === "expense-budgets") {
+      if (!validMonthId(item.month)) return "Month must use YYYY-MM.";
+      if (!item.category) return "Category is required.";
+      return decimalValidation(item["planned amount"], "Planned amount");
+    }
+    const recurring = { type: item.type, name: item.name, amount: Number(item.amount), frequency: item.frequency, start: item["start month"], end: item["end month"], day: item["payment day"] };
+    return recurringValidation(recurring, "");
+  }
+
+  function isValidISODate(value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) return false;
+    const d = new Date(`${value}T00:00:00Z`);
+    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+  }
+
+  function likelyDuplicateTx(item) {
+    const monthId = item.date.slice(0, 7);
+    const month = activeRecord().months[monthId];
+    if (!month) return false;
+    return (month.transactions || []).some((tx) => tx.date === item.date && num(tx.amount) === num(item.amount) && cleanName(tx.note).toLowerCase() === cleanName(item.description).toLowerCase() && cleanName(tx.category).toLowerCase() === cleanName(item.category).toLowerCase());
+  }
+
+  function csvImportSummary(parsed) {
+    return [
+      el("p", {}, ["File: ", el("b", { text: parsed.filename }), " · Type: ", el("b", { text: parsed.type })]),
+      el("p", { text: `${parsed.validRows.length} valid rows, ${parsed.invalidRows.length} invalid rows, ${parsed.duplicates.length} likely duplicates.` }),
+      parsed.unknownCategories.length ? el("p", { text: `Unknown categories: ${parsed.unknownCategories.slice(0, 8).join(", ")}` }) : null,
+      parsed.invalidRows.length ? el("p", { text: `First invalid row: line ${parsed.invalidRows[0].line}, ${parsed.invalidRows[0].issue}` }) : null,
+      renderPreviewTable(["Line", "Sample"], parsed.validRows.slice(0, 5).map((r) => [r.line, Object.values(r.item).join(" · ")])),
+    ].filter(Boolean);
+  }
+
+  function applyCsvImport(parsed) {
+    if (!createRecoveryPoint("csv-import")) return;
+    const categoryChoice = document.getElementById("csvCategoryChoice").value;
+    const duplicateChoice = document.getElementById("csvDuplicateChoice").value;
+    const nextRoot = safeClone(root);
+    const rec = migrateProfileRecord(nextRoot.profiles[activeProfile], activeProfile);
+    let imported = 0, skipped = 0, categoriesCreated = 0;
+    parsed.validRows.forEach(({ item }) => {
+      if (parsed.type === "transactions") {
+        const monthId = item.date.slice(0, 7);
+        const month = rec.months[monthId] || blankMonthFor(activeProfile, monthId, rec.state);
+        rec.months[monthId] = month;
+        const known = (month.expenses || []).find((e) => cleanName(e.name).toLowerCase() === cleanName(item.category).toLowerCase());
+        let category = known ? known.name : item.category;
+        if (!known && category) {
+          if (categoryChoice === "skip") { skipped++; return; }
+          if (categoryChoice === "create") { month.expenses.push({ id: uid(), name: category, budgeted: 0, actual: 0 }); categoriesCreated++; }
+          else category = "";
+        }
+        if (duplicateChoice === "skip" && likelyDuplicateTxForMonth(month, item, category)) { skipped++; return; }
+        month.transactions.push({ id: uid(), date: item.date, category, note: item.description || item.note || "", amount: Number(item.amount), createdAt: new Date().toISOString() });
+        imported++;
+      } else if (parsed.type === "expense-budgets") {
+        const month = rec.months[item.month] || blankMonthFor(activeProfile, item.month, rec.state);
+        rec.months[item.month] = month;
+        const existing = month.expenses.find((e) => cleanName(e.name).toLowerCase() === cleanName(item.category).toLowerCase());
+        if (existing) existing.budgeted = Number(item["planned amount"]);
+        else month.expenses.push({ id: uid(), name: item.category, budgeted: Number(item["planned amount"]), actual: 0 });
+        imported++;
+      } else {
+        rec.recurringItems = rec.recurringItems || [];
+        rec.recurringItems.push({ id: uid(), type: item.type, name: item.name, amount: Number(item.amount), frequency: item.frequency, start: item["start month"], end: item["end month"], day: item["payment day"], note: item.note, status: "active", createdAt: new Date().toISOString() });
+        imported++;
+      }
+    });
+    nextRoot.profiles[activeProfile] = rec;
+    root = nextRoot;
+    const record = profileRecord(activeProfile);
+    activeMonth = record.activeMonth;
+    state = record.state;
+    saveRoot();
+    closeDataModal();
+    renderAll();
+    notify("CSV imported");
+    setDataStatus(`${imported} rows imported, ${skipped} skipped, ${categoriesCreated} categories created. A recovery point was created first.`);
+  }
+
+  function likelyDuplicateTxForMonth(month, item, category) {
+    return (month.transactions || []).some((tx) => tx.date === item.date && num(tx.amount) === num(item.amount) && cleanName(tx.note).toLowerCase() === cleanName(item.description || item.note).toLowerCase() && cleanName(tx.category).toLowerCase() === cleanName(category).toLowerCase());
+  }
+
   function resetAll() {
-    openConfirm(`Reset ${PROFILES[activeProfile].label}'s data?`, "This will restore this profile to the default budget and delete its current categories, goals, transactions, debts, sinking funds, and history.", "Reset", () => {
+    openConfirm(`Reset ${profileMeta(activeProfile).label}'s data?`, "This will restore this profile to the default budget and delete its current categories, goals, transactions, debts, sinking funds, and history. A recovery point will be created first.", "Reset", () => {
+      if (!createRecoveryPoint("profile-reset")) return;
       const record = profileRecord(activeProfile);
       activeMonth = currentMonthId();
       state = normaliseMonthlyState(Object.assign(defaultsFor(activeProfile), { monthId: activeMonth, history: [] }), activeProfile, activeMonth, []);
@@ -3094,8 +3698,9 @@
     pendingProfile = "";
     document.getElementById("authForm").hidden = true;
   });
-  document.querySelectorAll("[data-profile-login]").forEach((btn) => {
-    btn.addEventListener("click", () => startLogin(btn.getAttribute("data-profile-login")));
+  document.querySelector(".profile-grid").addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-profile-login]");
+    if (btn) startLogin(btn.getAttribute("data-profile-login"));
   });
   document.getElementById("profileSwitchBtn").addEventListener("click", () => {
     sessionStorage.removeItem(SESSION_PROFILE_KEY);
@@ -3110,6 +3715,29 @@
     activeMonth = "";
     state = null;
     showAuth();
+  });
+  document.getElementById("downloadBackupBtn").addEventListener("click", downloadBackup);
+  document.getElementById("restoreBackupBtn").addEventListener("click", () => document.getElementById("restoreBackupInput").click());
+  document.getElementById("restoreBackupInput").addEventListener("change", (e) => {
+    handleBackupFile(e.target.files && e.target.files[0]);
+    e.target.value = "";
+  });
+  document.getElementById("exportCsvBtn").addEventListener("click", exportCsv);
+  document.getElementById("downloadTemplateBtn").addEventListener("click", downloadTemplate);
+  document.getElementById("importCsvBtn").addEventListener("click", () => document.getElementById("csvImportInput").click());
+  document.getElementById("csvImportInput").addEventListener("change", (e) => {
+    handleCsvFile(e.target.files && e.target.files[0]);
+    e.target.value = "";
+  });
+  document.getElementById("restoreRecoveryBtn").addEventListener("click", restoreRecoveryPoint);
+  document.getElementById("clearRecoveryBtn").addEventListener("click", clearRecoveryPoint);
+  document.getElementById("dataModalCancelBtn").addEventListener("click", closeDataModal);
+  document.getElementById("dataModal").addEventListener("click", (e) => {
+    if (e.target.id === "dataModal") closeDataModal();
+  });
+  document.getElementById("dataModalConfirmBtn").addEventListener("click", () => {
+    const action = pendingDataAction;
+    if (action) action();
   });
   document.getElementById("confirmCancelBtn").addEventListener("click", closeConfirm);
   document.getElementById("confirmModal").addEventListener("click", (e) => {

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#6f4e37" />
   <title>Budget &amp; Savings Goals</title>
-  <link rel="stylesheet" href="styles.css?v=rollover-20260721c" />
+  <link rel="stylesheet" href="styles.css?v=backup-20260721" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='18' fill='%236f4e37'/%3E%3Cpath d='M25 26h23c10 0 17 6 17 14 0 5-3 9-8 11 7 2 12 8 12 15 0 9-8 16-20 16H25V26zm14 12v10h8c3 0 5-2 5-5s-2-5-5-5h-8zm0 22v10h10c4 0 6-2 6-5s-2-5-6-5H39z' fill='%23fff8ea'/%3E%3Cpath d='M67 24l9 28h-8l-2-7H55l-2 7h-8l9-28h13zm-10 15h7l-3-10-4 10z' fill='%23d8b47b'/%3E%3C/svg%3E" />
 </head>
 <body>
@@ -63,6 +63,7 @@
       <a href="#planningGroup">Planning</a>
       <a href="#trackingGroup">Tracking</a>
       <a href="#progressGroup">Progress</a>
+      <a href="#dataSection">Data</a>
     </nav>
 
     <section class="month-panel" aria-labelledby="activeMonthTitle">
@@ -599,6 +600,60 @@
     </section>
       </div>
     </section>
+
+    <section class="card data-card" id="dataSection" aria-labelledby="dataTitle">
+      <div class="card__head">
+        <div>
+          <h3 id="dataTitle">Data and Backup</h3>
+          <p class="section-hint">Back up your budget data, restore a previous copy or export records for use elsewhere.</p>
+        </div>
+      </div>
+      <div class="data-summary" id="dataSummary"></div>
+      <p class="data-privacy">Your budget data is stored only in this browser. JSON backups contain sensitive financial information and are not encrypted by the app, so store downloaded files securely.</p>
+      <div class="data-actions">
+        <label>Backup scope
+          <select id="backupScope" class="input input--compact">
+            <option value="current">Current profile only</option>
+            <option value="all">All profiles on this browser</option>
+          </select>
+        </label>
+        <button class="btn btn--primary" id="downloadBackupBtn" type="button">Download full backup</button>
+        <button class="btn" id="restoreBackupBtn" type="button">Restore backup</button>
+        <input id="restoreBackupInput" type="file" accept="application/json,.json" hidden />
+        <label>CSV export
+          <select id="csvExportType" class="input input--compact">
+            <option value="transactions">Transactions</option>
+            <option value="monthly-summary">Monthly summary</option>
+            <option value="budget-actual">Budget versus actual</option>
+            <option value="recurring">Recurring items</option>
+            <option value="goals">Savings goals</option>
+            <option value="sinking">Sinking funds</option>
+            <option value="debts">Debts</option>
+          </select>
+        </label>
+        <label>CSV scope
+          <select id="csvScope" class="input input--compact">
+            <option value="current-month">Current month</option>
+            <option value="all-months">All months in this profile</option>
+            <option value="all-profiles">All profiles</option>
+          </select>
+        </label>
+        <button class="btn" id="exportCsvBtn" type="button">Export CSV</button>
+        <label>CSV import
+          <select id="csvImportType" class="input input--compact">
+            <option value="transactions">Transactions</option>
+            <option value="expense-budgets">Expense budgets</option>
+            <option value="recurring">Recurring items</option>
+          </select>
+        </label>
+        <button class="btn" id="downloadTemplateBtn" type="button">Download template</button>
+        <button class="btn" id="importCsvBtn" type="button">Import CSV</button>
+        <input id="csvImportInput" type="file" accept=".csv,text/csv" hidden />
+        <button class="btn" id="restoreRecoveryBtn" type="button">Restore recovery point</button>
+        <button class="btn" id="clearRecoveryBtn" type="button">Remove recovery point</button>
+      </div>
+      <p class="data-status" id="dataStatus" aria-live="polite"></p>
+    </section>
   </main>
 
   <!-- Sticky summary bar (mobile) -->
@@ -635,6 +690,18 @@
     </div>
   </div>
 
-  <script src="app.js?v=rollover-20260721c"></script>
+  <div class="modal-backdrop" id="dataModal" hidden>
+    <div class="confirm-dialog data-dialog" role="dialog" aria-modal="true" aria-labelledby="dataModalTitle" aria-describedby="dataModalBody">
+      <h2 id="dataModalTitle">Review data change</h2>
+      <div id="dataModalBody" class="data-preview"></div>
+      <div id="dataModalOptions" class="data-modal-options"></div>
+      <div class="confirm-actions">
+        <button class="btn" id="dataModalCancelBtn" type="button">Cancel</button>
+        <button class="btn btn--primary" id="dataModalConfirmBtn" type="button">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=backup-20260721"></script>
 </body>
 </html>

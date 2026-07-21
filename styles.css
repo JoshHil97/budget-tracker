@@ -418,6 +418,96 @@ body {
   margin-top: 1px;
   accent-color: var(--c-primary);
 }
+
+.data-card { min-width: 0; }
+.data-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.data-summary__item {
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  background: #fffaf4;
+  padding: 10px;
+  min-width: 0;
+}
+.data-summary__label {
+  display: block;
+  color: var(--c-muted);
+  font-size: .72rem;
+  font-weight: 900;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.data-summary__value {
+  display: block;
+  margin-top: 5px;
+  font-size: .96rem;
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+.data-privacy,
+.data-status {
+  color: var(--c-muted);
+  font-size: .88rem;
+  line-height: 1.45;
+}
+.data-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+  margin-top: 14px;
+}
+.data-actions label,
+.data-modal-options label {
+  display: grid;
+  gap: 5px;
+  color: var(--c-muted);
+  font-size: .78rem;
+  font-weight: 850;
+}
+.data-dialog {
+  width: min(720px, 100%);
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+}
+.data-preview {
+  color: var(--c-text);
+  line-height: 1.45;
+}
+.data-preview ul {
+  margin: 10px 0;
+  padding-left: 18px;
+}
+.data-preview code {
+  overflow-wrap: anywhere;
+}
+.data-modal-options {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0;
+}
+.preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  font-size: .84rem;
+}
+.preview-table th,
+.preview-table td {
+  border-bottom: 1px solid var(--c-border);
+  padding: 7px;
+  text-align: left;
+  vertical-align: top;
+}
+.preview-table th {
+  color: var(--c-muted);
+  font-size: .72rem;
+  text-transform: uppercase;
+}
 .checklist-list li {
   display: flex;
   align-items: center;
@@ -1382,6 +1472,42 @@ body {
     display: grid;
     grid-template-columns: 1fr;
     width: 100%;
+  }
+  .data-summary,
+  .data-actions {
+    grid-template-columns: 1fr;
+  }
+  .data-dialog { padding: 15px; }
+  .preview-table,
+  .preview-table thead,
+  .preview-table tbody,
+  .preview-table tr,
+  .preview-table td {
+    display: block;
+    width: 100%;
+  }
+  .preview-table thead { display: none; }
+  .preview-table tr {
+    border: 1px solid var(--c-border);
+    border-radius: 8px;
+    background: #fff;
+    margin-bottom: 8px;
+    padding: 8px;
+  }
+  .preview-table td {
+    border-bottom: 1px solid rgba(231, 221, 208, .75);
+    display: grid;
+    grid-template-columns: minmax(86px, .38fr) minmax(0, 1fr);
+    gap: 8px;
+    padding: 7px 0;
+  }
+  .preview-table td:last-child { border-bottom: 0; }
+  .preview-table td::before {
+    content: attr(data-label);
+    color: var(--c-muted);
+    font-size: .7rem;
+    font-weight: 900;
+    text-transform: uppercase;
   }
   .rollover-dialog { padding: 15px; }
   .checklist-card__toggle {
