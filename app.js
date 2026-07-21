@@ -133,7 +133,9 @@
   const gbp = new Intl.NumberFormat("en-GB", {
     style: "currency", currency: "GBP", minimumFractionDigits: 2, maximumFractionDigits: 2,
   });
+  const CURRENCY_TOLERANCE = 0.005;
   function money(n) { return gbp.format(isFinite(n) ? n : 0); }
+  function pct(n) { return `${Math.round(isFinite(n) ? n : 0)}%`; }
 
   function el(tag, attrs, children) {
     const node = document.createElement(tag);
@@ -686,6 +688,7 @@
 
     renderBreakdownChart(t);
     renderGuidance(t);
+    renderInsights(t);
     renderMoneyTrail();
     renderAdvisor();
   }
@@ -712,6 +715,313 @@
     banner.hidden = false;
     banner.className = "guidance-banner guidance-banner--" + tone;
     banner.textContent = text;
+  }
+
+  function insight(id, type, priority, title, message, opts) {
+    const options = opts || {};
+    return Object.assign({ id, type, priority, title, message }, options);
+  }
+
+  function insightContext(totalsArg) {
+    const t = totalsArg || totals();
+    const txTotals = transactionTotalsByCategory();
+    const txCounts = {};
+    let uncategorisedTotal = 0;
+    (state.transactions || []).forEach((tx) => {
+      const amount = num(tx.amount);
+      if (amount <= 0) return;
+      const key = tx.category || "Uncategorised";
+      txCounts[key] = (txCounts[key] || 0) + 1;
+      if (!tx.category) uncategorisedTotal += amount;
+    });
+
+    const expenses = (state.expenses || []).map((e) => {
+      const actual = expenseActual(e, txTotals);
+      const budgeted = num(e.budgeted);
+      return {
+        name: e.name || "Unnamed category",
+        budgeted,
+        actual,
+        diff: budgeted - actual,
+        txCount: txCounts[e.name] || 0,
+      };
+    });
+    const overCategories = expenses.filter((e) => e.actual - e.budgeted > CURRENCY_TOLERANCE).sort((a, b) => (b.actual - b.budgeted) - (a.actual - a.budgeted));
+    const underCategories = expenses.filter((e) => e.budgeted - e.actual > CURRENCY_TOLERANCE && e.budgeted > 0).sort((a, b) => (b.budgeted - b.actual) - (a.budgeted - a.actual));
+    const actualCategories = expenses.filter((e) => e.actual > CURRENCY_TOLERANCE).sort((a, b) => b.actual - a.actual);
+    const plannedCategories = expenses.filter((e) => e.budgeted > CURRENCY_TOLERANCE).sort((a, b) => b.budgeted - a.budgeted);
+    const totalOver = overCategories.reduce((acc, e) => acc + (e.actual - e.budgeted), 0);
+    const totalUnder = Math.max(t.expBudgeted - t.expActual, 0);
+    const mostTransactions = expenses.filter((e) => e.txCount > 0).sort((a, b) => b.txCount - a.txCount)[0];
+    const lastHistory = (state.history || []).length ? state.history[state.history.length - 1] : null;
+
+    return { t, expenses, overCategories, underCategories, actualCategories, plannedCategories, totalOver, totalUnder, txCounts, uncategorisedTotal, mostTransactions, lastHistory };
+  }
+
+  function buildInsights(totalsArg) {
+    const ctx = insightContext(totalsArg);
+    if (ctx.t.income <= CURRENCY_TOLERANCE) return insufficientDataInsights(ctx);
+    return selectInsights([
+      ...budgetInsights(ctx),
+      ...allocationInsights(ctx),
+      ...savingsInsights(ctx),
+      ...spendingCategoryInsights(ctx),
+      ...debtInsights(ctx),
+      ...sinkingInsights(ctx),
+      ...historyInsights(ctx),
+      ...insufficientDataInsights(ctx),
+    ]);
+  }
+
+  function selectInsights(items) {
+    const seen = new Set();
+    return items
+      .filter(Boolean)
+      .filter((item) => {
+        if (seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      })
+      .sort((a, b) => a.priority - b.priority)
+      .slice(0, 5);
+  }
+
+  function budgetInsights(ctx) {
+    const { t, overCategories, underCategories, totalOver, totalUnder } = ctx;
+    const items = [];
+    if (totalOver > CURRENCY_TOLERANCE) {
+      items.push(insight(
+        "budget-overall-over",
+        "attention",
+        20,
+        "Spending is above plan",
+        `You are ${money(totalOver)} over budget across ${overCategories.length} categor${overCategories.length === 1 ? "y" : "ies"}.`,
+        { value: money(totalOver), actionLabel: "Review spending", actionTarget: "expensesSection", focusSelector: "input[aria-label='Actual']" }
+      ));
+    } else if (t.expBudgeted > 0 && Math.abs(t.expBudgeted - t.expActual) <= CURRENCY_TOLERANCE) {
+      items.push(insight("budget-exact", "positive", 90, "Exactly on budget", "Actual category spending currently matches your planned category budget.", { value: money(t.expActual), actionLabel: "Review spending", actionTarget: "expensesSection" }));
+    } else if (t.expBudgeted > 0 && totalUnder > CURRENCY_TOLERANCE) {
+      items.push(insight("budget-under", "positive", 85, "Below planned spending", `You are ${money(totalUnder)} below your planned category spending.`, { value: money(totalUnder), actionLabel: "Review spending", actionTarget: "expensesSection" }));
+    }
+
+    const categoryOver = overCategories[0];
+    if (categoryOver) {
+      const overspend = categoryOver.actual - categoryOver.budgeted;
+      const overPct = categoryOver.budgeted > CURRENCY_TOLERANCE ? `, which is ${pct((overspend / categoryOver.budgeted) * 100)} above plan` : "";
+      items.push(insight(
+        "category-overspend",
+        "attention",
+        21,
+        `${categoryOver.name} is over budget`,
+        `${categoryOver.name} is ${money(overspend)} over budget${overPct}.`,
+        { value: money(overspend), actionLabel: "Review spending", actionTarget: "expensesSection" }
+      ));
+    }
+
+    const categoryUnder = underCategories[0];
+    if (!categoryOver && categoryUnder && categoryUnder.budgeted >= 50) {
+      items.push(insight(
+        "category-underspend",
+        "neutral",
+        95,
+        `${categoryUnder.name} has budget remaining`,
+        `You have ${money(categoryUnder.budgeted - categoryUnder.actual)} remaining in your ${categoryUnder.name} budget.`,
+        { value: money(categoryUnder.budgeted - categoryUnder.actual), actionLabel: "Review spending", actionTarget: "expensesSection" }
+      ));
+    }
+    return items;
+  }
+
+  function allocationInsights(ctx) {
+    const { t } = ctx;
+    if (t.income <= CURRENCY_TOLERANCE) return [];
+    if (t.plannedCommitments - t.income > CURRENCY_TOLERANCE) {
+      return [insight("commitments-over-income", "attention", 30, "Plan exceeds income", `Your planned commitments are ${money(t.plannedCommitments - t.income)} above your income, so the current plan is not sustainable.`, { value: money(t.plannedCommitments - t.income), actionLabel: "Allocate income", actionTarget: "planningGroup" })];
+    }
+    if (t.actualCashRemaining < -CURRENCY_TOLERANCE || t.unallocatedIncome < -CURRENCY_TOLERANCE) {
+      const gap = Math.abs(Math.min(t.actualCashRemaining, t.unallocatedIncome));
+      return [insight("negative-position", "attention", 10, "Income is under pressure", `Your commitments and actual outgoings exceed your income by ${money(gap)}.`, { value: money(gap), actionLabel: "Review plan", actionTarget: "planningGroup" })];
+    }
+    if (t.safeToSpend > CURRENCY_TOLERANCE && t.safeToSpend <= 50) {
+      return [insight("low-safe-to-spend", "attention", 40, "Safe to spend is low", `You can spend up to ${money(t.safeToSpend)} without breaking your current plan.`, { value: money(t.safeToSpend), actionLabel: "Review plan", actionTarget: "planningGroup" })];
+    }
+    if (Math.abs(t.safeToSpend) <= CURRENCY_TOLERANCE && Math.abs(t.unallocatedIncome) <= CURRENCY_TOLERANCE) {
+      return [insight("fully-allocated", "positive", 80, "Income fully allocated", "Every pound of your monthly income has been assigned.", { value: money(0), actionLabel: "Review plan", actionTarget: "summarySection" })];
+    }
+    if (t.unallocatedIncome > CURRENCY_TOLERANCE) {
+      return [insight("unallocated-income", "neutral", 70, "Income not yet allocated", `You have ${money(t.unallocatedIncome)} that has not yet been assigned.`, { value: money(t.unallocatedIncome), actionLabel: "Allocate income", actionTarget: "planningGroup" })];
+    }
+    return [];
+  }
+
+  function savingsInsights(ctx) {
+    const { t } = ctx;
+    const items = [];
+    const completed = (state.goals || []).find((g) => num(g.target) > 0 && num(g.current) + CURRENCY_TOLERANCE >= num(g.target));
+    if (completed) {
+      items.push(insight("goal-completed", "positive", 56, "Savings goal completed", `You completed your ${completed.name || "savings"} goal.`, { value: money(num(completed.target)), actionLabel: "View savings goal", actionTarget: "goalsSection" }));
+    }
+
+    const milestone = (state.goals || [])
+      .filter((g) => num(g.target) > 0 && num(g.current) > 0)
+      .map((g) => ({ goal: g, calc: goalCalc(g) }))
+      .filter((x) => x.calc.pct >= 25)
+      .sort((a, b) => b.calc.pct - a.calc.pct)[0];
+    if (milestone && (!completed || milestone.goal.id !== completed.id)) {
+      const mark = milestone.calc.pct >= 75 ? 75 : milestone.calc.pct >= 50 ? 50 : 25;
+      items.push(insight("goal-milestone", "positive", 57, "Savings goal milestone", `${milestone.goal.name || "Savings goal"} has reached at least ${mark}% of its target.`, { value: pct(milestone.calc.pct), actionLabel: "View savings goal", actionTarget: "goalsSection" }));
+    }
+
+    if (t.income <= CURRENCY_TOLERANCE) {
+      items.push(insight("savings-no-income", "neutral", 120, "Savings rate unavailable", "Add monthly income to calculate your savings rate.", { actionLabel: "Add income", actionTarget: "incomeSection", focusSelector: "#incomeInput" }));
+    } else if (t.savBudgeted <= CURRENCY_TOLERANCE) {
+      items.push(insight("no-savings-allocation", "neutral", 58, "No savings allocated", "You have not allocated any income to savings this month.", { actionLabel: "Add savings allocation", actionTarget: "savingsSection", focusSelector: "input[aria-label='Budgeted']" }));
+    } else {
+      const rate = (t.savBudgeted / t.income) * 100;
+      items.push(insight("savings-rate", "positive", 55, "Savings rate calculated", `You have allocated ${money(t.savBudgeted)}, or ${pct(rate)} of your income, to savings.`, { value: pct(rate), actionLabel: "Review savings", actionTarget: "savingsSection" }));
+    }
+    return items;
+  }
+
+  function spendingCategoryInsights(ctx) {
+    const { t, actualCategories, plannedCategories, mostTransactions, uncategorisedTotal } = ctx;
+    const items = [];
+    const largestActual = actualCategories[0];
+    if (largestActual) {
+      const share = t.expActual > CURRENCY_TOLERANCE ? ` It represents ${pct((largestActual.actual / t.expActual) * 100)} of recorded category spending.` : "";
+      items.push(insight("largest-actual-category", "neutral", 100, "Largest actual category", `${largestActual.name} is your largest actual spending category at ${money(largestActual.actual)}.${share}`, { value: money(largestActual.actual), actionLabel: "Review spending", actionTarget: "moneyTrailSection" }));
+    }
+    const largestPlanned = plannedCategories[0];
+    if (largestPlanned) {
+      items.push(insight("largest-planned-category", "neutral", 112, "Largest planned category", `${largestPlanned.name} is your largest planned expense at ${money(largestPlanned.budgeted)}.`, { value: money(largestPlanned.budgeted), actionLabel: "Review budgets", actionTarget: "expensesSection" }));
+    }
+    if (mostTransactions && mostTransactions.txCount >= 2) {
+      items.push(insight("most-transactions", "neutral", 105, "Most frequent category", `${mostTransactions.name} contains ${mostTransactions.txCount} transactions, more than any other category.`, { value: String(mostTransactions.txCount), actionLabel: "Review spending", actionTarget: "transactionsSection" }));
+    }
+    if (uncategorisedTotal > CURRENCY_TOLERANCE) {
+      items.push(insight("uncategorised-spending", "attention", 22, "Uncategorised spending found", `You have ${money(uncategorisedTotal)} of uncategorised spending.`, { value: money(uncategorisedTotal), actionLabel: "Review transactions", actionTarget: "transactionsSection" }));
+    }
+    return items;
+  }
+
+  function debtInsights() {
+    const debts = (state.debts || []);
+    if (!debts.length) return [insight("no-debt-data", "neutral", 130, "No debt insights available", "No debt insights are available because no debts are being tracked.", { actionLabel: "Add debt", actionTarget: "debtSection", focusSelector: "input[aria-label='Debt name']" })];
+    const active = debts.filter((d) => num(d.balance) > CURRENCY_TOLERANCE);
+    const cleared = debts.find((d) => cleanName(d.name) && num(d.balance) <= CURRENCY_TOLERANCE);
+    const highestApr = active.filter((d) => num(d.apr) > 0).sort((a, b) => num(b.apr) - num(a.apr))[0];
+    const items = [];
+    const totalDebt = active.reduce((acc, d) => acc + num(d.balance), 0);
+    if (totalDebt > CURRENCY_TOLERANCE) {
+      items.push(insight("total-debt", "neutral", 60, "Debt balance recorded", `You have ${money(totalDebt)} remaining across ${active.length} debt${active.length === 1 ? "" : "s"}.`, { value: money(totalDebt), actionLabel: "Review debt", actionTarget: "debtSection" }));
+    }
+    if (highestApr) {
+      items.push(insight("highest-apr", "neutral", 61, "Highest recorded APR", `${highestApr.name || "A debt"} currently has the highest recorded APR at ${num(highestApr.apr).toFixed(1)}%.`, { value: `${num(highestApr.apr).toFixed(1)}%`, actionLabel: "Review debt", actionTarget: "debtSection" }));
+    }
+    if (cleared) {
+      items.push(insight("debt-cleared", "positive", 62, "Debt cleared", `You cleared your ${cleared.name} balance.`, { value: money(0), actionLabel: "Review debt", actionTarget: "debtSection" }));
+    }
+    return items;
+  }
+
+  function sinkingInsights() {
+    const funds = (state.sinkingFunds || []).filter((f) => cleanName(f.name) || num(f.cost) > 0 || num(f.saved) > 0);
+    if (!funds.length) return [];
+    const items = [];
+    const completed = funds.find((f) => num(f.cost) > 0 && num(f.saved) + CURRENCY_TOLERANCE >= num(f.cost));
+    if (completed) {
+      items.push(insight("sinking-completed", "positive", 52, "Sinking fund completed", `${completed.name || "A sinking fund"} has reached its target amount.`, { value: money(num(completed.cost)), actionLabel: "Update sinking fund", actionTarget: "sinkingSection" }));
+    }
+    const missed = funds.find((f) => num(f.cost) > num(f.saved) && f.date && monthsUntilRaw(f.date) < 0);
+    if (missed) {
+      items.push(insight("sinking-missed", "attention", 50, "Sinking fund target passed", `${missed.name || "A sinking fund"} has passed its target month with ${money(num(missed.cost) - num(missed.saved))} still remaining.`, { value: money(num(missed.cost) - num(missed.saved)), actionLabel: "Update sinking fund", actionTarget: "sinkingSection" }));
+    }
+    const dated = funds.filter((f) => f.date && num(f.cost) > num(f.saved)).sort((a, b) => monthsUntilRaw(a.date) - monthsUntilRaw(b.date))[0];
+    if (dated) {
+      items.push(insight("next-sinking", "neutral", 110, "Next upcoming planned cost", `${dated.name || "A sinking fund"} is your next upcoming planned cost. It needs ${money(sinkingMonthly(dated))} per month.`, { value: money(sinkingMonthly(dated)), actionLabel: "Update sinking fund", actionTarget: "sinkingSection" }));
+    }
+    const largest = funds.slice().sort((a, b) => sinkingMonthly(b) - sinkingMonthly(a))[0];
+    if (largest && sinkingMonthly(largest) > CURRENCY_TOLERANCE) {
+      items.push(insight("largest-sinking", "neutral", 111, "Largest sinking fund contribution", `${largest.name || "A sinking fund"} requires ${money(sinkingMonthly(largest))} per month.`, { value: money(sinkingMonthly(largest)), actionLabel: "Update sinking fund", actionTarget: "sinkingSection" }));
+    }
+    return items;
+  }
+
+  function historyInsights(ctx) {
+    const { t, lastHistory } = ctx;
+    if (!lastHistory) return [insight("history-empty", "neutral", 140, "No month-on-month comparison yet", "Save at least two months to unlock month-on-month comparisons.", { actionLabel: "Save current month", actionTarget: "historySection", focusSelector: "#saveSnapshotBtn" })];
+    const items = [];
+    const spendDiff = t.expActual - num(lastHistory.expenses);
+    if (Math.abs(spendDiff) > CURRENCY_TOLERANCE) {
+      const previous = num(lastHistory.expenses);
+      const pctText = previous > CURRENCY_TOLERANCE ? ` (${pct(Math.abs(spendDiff / previous) * 100)} ${spendDiff > 0 ? "higher" : "lower"})` : "";
+      items.push(insight(
+        "history-spending",
+        spendDiff > 0 ? "attention" : "positive",
+        spendDiff > 0 ? 92 : 91,
+        spendDiff > 0 ? "Spending is higher than last saved month" : "Spending is lower than last saved month",
+        spendDiff > 0
+          ? `You have spent ${money(spendDiff)} more than the most recent saved month${pctText}.`
+          : `You have spent ${money(Math.abs(spendDiff))} less than the most recent saved month${pctText}.`,
+        { value: money(Math.abs(spendDiff)), actionLabel: "View history", actionTarget: "historySection" }
+      ));
+    }
+    const savingsDiff = t.savActual - num(lastHistory.savings);
+    if (Math.abs(savingsDiff) > CURRENCY_TOLERANCE) {
+      items.push(insight(
+        "history-savings",
+        savingsDiff >= 0 ? "positive" : "neutral",
+        93,
+        "Savings changed since last saved month",
+        savingsDiff >= 0 ? `Actual savings increased by ${money(savingsDiff)} compared with the most recent saved month.` : `Actual savings decreased by ${money(Math.abs(savingsDiff))} compared with the most recent saved month.`,
+        { value: money(Math.abs(savingsDiff)), actionLabel: "View history", actionTarget: "historySection" }
+      ));
+    }
+    const incomeDiff = t.income - num(lastHistory.income);
+    if (Math.abs(incomeDiff) > CURRENCY_TOLERANCE) {
+      items.push(insight("history-income", "neutral", 94, "Income changed since last saved month", incomeDiff >= 0 ? `Income is ${money(incomeDiff)} higher than the most recent saved month.` : `Income is ${money(Math.abs(incomeDiff))} lower than the most recent saved month.`, { value: money(Math.abs(incomeDiff)), actionLabel: "View history", actionTarget: "historySection" }));
+    }
+    return items;
+  }
+
+  function insufficientDataInsights(ctx) {
+    const { t } = ctx;
+    if (t.income <= CURRENCY_TOLERANCE) {
+      return [insight("insufficient-income", "neutral", 5, "Add income for insights", "Add monthly income to generate personalised financial insights.", { actionLabel: "Add income", actionTarget: "incomeSection", focusSelector: "#incomeInput" })];
+    }
+    if (!(state.transactions || []).some((tx) => num(tx.amount) > 0)) {
+      return [insight("insufficient-transactions", "neutral", 125, "Record spending for actual insights", "Record spending to compare actual costs with your budget.", { actionLabel: "Record spending", actionTarget: "transactionsSection", focusSelector: "input[aria-label='Amount']" })];
+    }
+    return [];
+  }
+
+  function renderInsights(totalsArg) {
+    const container = document.getElementById("monthlyInsights");
+    if (!container || !state) return;
+    container.textContent = "";
+    const items = buildInsights(totalsArg);
+    if (!items.length) {
+      container.appendChild(emptyState("Insights need more data", "Add income, budgets or spending to generate useful local insights.", "Add income", sectionAction("incomeSection", "#incomeInput")));
+      return;
+    }
+    items.forEach((item) => {
+      const statusText = item.type === "attention" ? "Attention required" : item.type === "positive" ? "Positive" : "Neutral";
+      container.appendChild(el("article", { class: "insight insight--" + item.type, "aria-labelledby": "insight-" + item.id }, [
+        el("div", { class: "insight__body" }, [
+          el("span", { class: "insight__status", text: statusText }),
+          el("h4", { id: "insight-" + item.id, text: item.title }),
+          el("p", { text: item.message }),
+        ]),
+        el("div", { class: "insight__meta" }, [
+          item.value ? el("strong", { class: "insight__value", text: item.value }) : null,
+          item.actionLabel ? el("button", {
+            class: "btn btn--sm",
+            type: "button",
+            onclick: sectionAction(item.actionTarget, item.focusSelector),
+          }, [item.actionLabel]) : null,
+        ].filter(Boolean)),
+      ]));
+    });
   }
 
   /* ---------- Donut chart: expenses vs each savings category ---------- */
@@ -922,7 +1232,7 @@
     const name = el("input", {
       class: "goal__name editable", type: "text", value: g.name, "aria-label": "Goal name",
       oninput: (e) => {
-        commitName(e.target, state.goals, g, "Savings goal", () => { renderAdvisor(); });
+        commitName(e.target, state.goals, g, "Savings goal", () => { renderInsights(); renderAdvisor(); });
       },
     });
     const del = el("button", {
@@ -930,7 +1240,7 @@
       onclick: () => {
         openConfirm(`Delete ${g.name || "this savings goal"}?`, "This will remove the goal, its target, current saved amount, monthly contribution, and progress calculation.", "Delete", () => {
           state.goals = state.goals.filter((x) => x.id !== g.id);
-          save(); renderGoals(); renderAdvisor(); notify("Savings goal deleted");
+          save(); renderGoals(); renderInsights(); renderAdvisor(); notify("Savings goal deleted");
         });
       },
     }, ["✕"]);
@@ -1069,6 +1379,7 @@
           save();
           payoffCell.textContent = payoffText(d);
           payoffCell.className = "col-num cell-calc " + payoffClass(d);
+          renderInsights();
           renderAdvisor();
           if (key === "balance" && num(d.balance) === 0) renderDebts();
         },
@@ -1085,7 +1396,7 @@
       onclick: () => {
         openConfirm(`Delete ${d.name || "this debt"}?`, `This will remove the ${money(d.balance)} balance and its payoff calculation from the debt tracker.`, "Delete", () => {
           state.debts = state.debts.filter((x) => x.id !== d.id);
-          save(); renderDebts(); renderAdvisor(); notify("Debt deleted");
+          save(); renderDebts(); renderInsights(); renderAdvisor(); notify("Debt deleted");
         });
       },
     }, ["✕"]);
@@ -1128,6 +1439,7 @@
   function updateSinkingTotals(refreshAdvisor = true) {
     const totalEl = document.getElementById("sinkingMonthlyTotal");
     if (totalEl) totalEl.textContent = money(state.sinkingFunds.reduce((tt, f) => tt + sinkingMonthly(f), 0));
+    renderInsights();
     if (refreshAdvisor) renderAdvisor();
   }
 
@@ -1204,7 +1516,7 @@
       onclick: () => {
         openConfirm(`Delete ${f.name || "this sinking fund"}?`, `This will remove its ${money(sinkingMonthly(f))} monthly set-aside from planned commitments.`, "Delete", () => {
           state.sinkingFunds = state.sinkingFunds.filter((x) => x.id !== f.id);
-          save(); renderSinking(); renderSummary(); notify("Sinking fund deleted");
+          save(); renderSinking(); renderSummary(); renderInsights(); notify("Sinking fund deleted");
         });
       },
     }, ["✕"]);
@@ -1437,7 +1749,7 @@
       save(); renderGoals(); notify("Savings goal added");
     } else if (listKey === "debts") {
       state.debts.push({ id: uid(), name: uniqueName(state.debts, "New debt"), balance: 0, apr: 0, payment: 0 });
-      save(); renderDebts(); notify("Debt added");
+      save(); renderDebts(); renderInsights(); notify("Debt added");
     } else if (listKey === "sinking") {
       state.sinkingFunds.push({ id: uid(), name: uniqueName(state.sinkingFunds, "New fund"), cost: 0, saved: 0, start: "", date: nextMonthISO() });
       save(); renderSinking(); renderSummary(); notify("Sinking fund added");
@@ -1468,6 +1780,7 @@
     save();
     renderHistory();
     renderOnboarding();
+    renderInsights();
     notify("Budget snapshot saved");
   }
 
