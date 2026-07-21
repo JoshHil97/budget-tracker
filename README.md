@@ -13,6 +13,13 @@ HTML/CSS/JS with data persisted in the browser's `localStorage`.
 - **Summary dashboard** — Income − Expenses − Savings = Left Over, shown
   prominently, plus a donut chart of where the month's money went (expenses vs.
   each savings category vs. unallocated).
+- **Private profile rooms** — Josh and Ayo each get separate local data and a
+  passcode gate on the same app.
+- **Spending log** — add individual purchases by date, category, note, and
+  amount; logged purchases roll into category Actual totals.
+- **Money trail** — richer "where the money went" cards, category bars, over/under
+  plan indicators, and biggest-spend highlights.
+- **Stewardship word** — rotating scripture prompts for faith-led planning.
 - **Savings goals** — target / current / monthly contribution with auto-calculated
   months remaining, estimated completion date, and a progress bar per goal.
 - **Debt payoff** — name, balance, APR, monthly payment with an auto-calculated
@@ -40,4 +47,5 @@ python3 -m http.server 8080
 ```
 
 All data stays in your browser via `localStorage` under the key
-`budget-savings-app.v1`.
+`budget-savings-app.profiles.v2`. The passcode gate protects local profile
+switching in the browser; true server-side privacy would require backend auth.

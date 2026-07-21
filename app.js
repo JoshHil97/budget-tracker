@@ -4,6 +4,8 @@
   "use strict";
 
   const STORAGE_KEY = "budget-savings-app.v1";
+  const ROOT_KEY = "budget-savings-app.profiles.v2";
+  const SESSION_PROFILE_KEY = "budget-savings-app.activeProfile";
 
   /* ---------- Defaults ---------- */
   const DEFAULT_STATE = {
@@ -49,8 +51,52 @@
       { id: uid(), name: "Germany trip (hotel + spend)", cost: 580, saved: 0, start: "", date: nextMonthISO() },
       { id: uid(), name: "Milan trip with Ayo (est.)", cost: 700, saved: 0, start: monthsAheadISO(1), date: monthsAheadISO(2) },
     ],
+    transactions: [
+      { id: uid(), date: todayISO(), category: "Transport", note: "Train / travel", amount: 0 },
+      { id: uid(), date: todayISO(), category: "Groceries (work + home)", note: "Food shop", amount: 0 },
+    ],
     history: [], // { id, label, income, tithe, expenses, savings, leftover }
   };
+
+  const AYO_DEFAULT_STATE = Object.assign(structuredClone(DEFAULT_STATE), {
+    income: 0,
+    expenses: [
+      { name: "Transport", budgeted: 0 },
+      { name: "Food", budgeted: 0 },
+      { name: "Phone", budgeted: 0 },
+      { name: "Subscriptions", budgeted: 0 },
+      { name: "Personal care", budgeted: 0 },
+      { name: "Family / giving", budgeted: 0 },
+      { name: "Fun money", budgeted: 0 },
+    ].map((e) => ({ id: uid(), name: e.name, budgeted: e.budgeted, actual: 0 })),
+    savings: [
+      { name: "Emergency pot", budgeted: 0 },
+      { name: "Travel / experiences", budgeted: 0 },
+      { name: "Future home", budgeted: 0 },
+      { name: "Investing", budgeted: 0 },
+    ].map((s) => ({ id: uid(), name: s.name, budgeted: s.budgeted, actual: 0 })),
+    goals: [
+      { name: "Emergency Fund", target: 0, current: 0, monthly: 0 },
+      { name: "Travel", target: 0, current: 0, monthly: 0 },
+      { name: "Future Home", target: 0, current: 0, monthly: 0 },
+    ].map((g) => Object.assign({ id: uid() }, g)),
+    debts: [],
+    sinkingFunds: [],
+    transactions: [],
+    history: [],
+  });
+
+  const PROFILES = {
+    josh: { label: "Josh", subtitle: "Josh Special: giving first, debt down, future built." },
+    ayo: { label: "Ayo", subtitle: "Ayo's private budget room." },
+  };
+
+  const SCRIPTURES = [
+    { text: "The plans of the diligent lead surely to abundance.", ref: "Proverbs 21:5" },
+    { text: "For where your treasure is, there your heart will be also.", ref: "Matthew 6:21" },
+    { text: "Each of you should use whatever gift you have received to serve others.", ref: "1 Peter 4:10" },
+    { text: "Commit your work to the Lord, and your plans will be established.", ref: "Proverbs 16:3" },
+  ];
 
   /* ---------- Utilities ---------- */
   function uid() { return "id" + Math.random().toString(36).slice(2, 10); }
@@ -63,6 +109,7 @@
     return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
   }
   function nextMonthISO() { return monthsAheadISO(1); }
+  function todayISO() { return new Date().toISOString().slice(0, 10); }
 
   // Whole months from now to a "YYYY-MM" month (can be 0 or negative).
   function monthsUntilRaw(iso) {
@@ -104,32 +151,145 @@
   }
 
   /* ---------- State ---------- */
-  let state = load();
+  let root = loadRoot();
+  let activeProfile = sessionStorage.getItem(SESSION_PROFILE_KEY) || "";
+  let pendingProfile = "";
+  let state = null;
 
-  function load() {
+  function defaultsFor(profileId) {
+    return structuredClone(profileId === "ayo" ? AYO_DEFAULT_STATE : DEFAULT_STATE);
+  }
+
+  function loadRoot() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return structuredClone(DEFAULT_STATE);
-      const parsed = JSON.parse(raw);
-      // Shallow-merge to tolerate older/partial saves.
-      return Object.assign(structuredClone(DEFAULT_STATE), parsed);
+      const rawRoot = localStorage.getItem(ROOT_KEY);
+      if (rawRoot) return JSON.parse(rawRoot);
+      const legacy = localStorage.getItem(STORAGE_KEY);
+      const migratedJosh = legacy ? JSON.parse(legacy) : defaultsFor("josh");
+      const freshRoot = {
+        profiles: {
+          josh: { passHash: "", state: Object.assign(defaultsFor("josh"), migratedJosh) },
+          ayo: { passHash: "", state: defaultsFor("ayo") },
+        },
+      };
+      localStorage.setItem(ROOT_KEY, JSON.stringify(freshRoot));
+      return freshRoot;
     } catch (e) {
-      console.warn("Failed to load state, using defaults", e);
-      return structuredClone(DEFAULT_STATE);
+      console.warn("Failed to load profiles, using defaults", e);
+      return { profiles: { josh: { passHash: "", state: defaultsFor("josh") }, ayo: { passHash: "", state: defaultsFor("ayo") } } };
     }
   }
 
+  function saveRoot() {
+    try { localStorage.setItem(ROOT_KEY, JSON.stringify(root)); }
+    catch (e) { console.warn("Failed to save profiles", e); }
+  }
+
   function save() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
-    catch (e) { console.warn("Failed to save state", e); }
+    if (!activeProfile || !root.profiles[activeProfile]) return;
+    root.profiles[activeProfile].state = state;
+    saveRoot();
+  }
+
+  async function hashPasscode(passcode) {
+    if (!window.crypto || !window.crypto.subtle) return "fallback:" + simpleHash("budget-room:" + passcode);
+    const data = new TextEncoder().encode("budget-room:" + passcode);
+    const digest = await crypto.subtle.digest("SHA-256", data);
+    return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  function simpleHash(value) {
+    let h = 2166136261;
+    for (let i = 0; i < value.length; i++) {
+      h ^= value.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0).toString(16);
+  }
+
+  function profileRecord(profileId) {
+    if (!root.profiles) root.profiles = {};
+    if (!root.profiles[profileId]) root.profiles[profileId] = { passHash: "", state: defaultsFor(profileId) };
+    root.profiles[profileId].state = Object.assign(defaultsFor(profileId), root.profiles[profileId].state || {});
+    if (!Array.isArray(root.profiles[profileId].state.transactions)) root.profiles[profileId].state.transactions = [];
+    return root.profiles[profileId];
+  }
+
+  function showAuth() {
+    document.getElementById("authScreen").hidden = false;
+    document.getElementById("appShell").hidden = true;
+    document.getElementById("authForm").hidden = true;
+    document.getElementById("passcodeInput").value = "";
+  }
+
+  function showApp(profileId) {
+    activeProfile = profileId;
+    sessionStorage.setItem(SESSION_PROFILE_KEY, profileId);
+    const record = profileRecord(profileId);
+    state = record.state;
+    document.getElementById("authScreen").hidden = true;
+    document.getElementById("appShell").hidden = false;
+    document.getElementById("profileSubtitle").textContent = PROFILES[profileId].subtitle;
+    renderAll();
+  }
+
+  function startLogin(profileId) {
+    pendingProfile = profileId;
+    const record = profileRecord(profileId);
+    document.getElementById("authForm").hidden = false;
+    document.getElementById("authProfileName").textContent = PROFILES[profileId].label;
+    document.getElementById("authPassLabel").textContent = record.passHash ? "Passcode" : "Create passcode";
+    document.getElementById("authSubmitBtn").textContent = record.passHash ? "Unlock" : "Create & unlock";
+    document.getElementById("authNote").textContent = record.passHash ? "" : "First time here: choose at least 4 characters.";
+    document.getElementById("passcodeInput").value = "";
+    document.getElementById("passcodeInput").focus();
+    saveRoot();
+  }
+
+  async function submitLogin(e) {
+    e.preventDefault();
+    const note = document.getElementById("authNote");
+    const passcode = document.getElementById("passcodeInput").value;
+    if (!pendingProfile) return;
+    if (passcode.length < 4) {
+      note.textContent = "Use at least 4 characters.";
+      return;
+    }
+    const record = profileRecord(pendingProfile);
+    const hash = await hashPasscode(passcode);
+    if (!record.passHash) {
+      record.passHash = hash;
+      saveRoot();
+      showApp(pendingProfile);
+      return;
+    }
+    if (record.passHash !== hash) {
+      note.textContent = "That passcode didn't match.";
+      return;
+    }
+    showApp(pendingProfile);
   }
 
   /* ---------- Derived totals ---------- */
   function sum(list, key) { return list.reduce((t, r) => t + num(r[key]), 0); }
 
+  function transactionTotalsByCategory() {
+    return (state.transactions || []).reduce((acc, tx) => {
+      const key = tx.category || "Uncategorised";
+      acc[key] = (acc[key] || 0) + num(tx.amount);
+      return acc;
+    }, {});
+  }
+
+  function expenseActual(item, txTotals) {
+    const logged = txTotals || transactionTotalsByCategory();
+    return num(item.actual) + num(logged[item.name]);
+  }
+
   function totals() {
+    const txTotals = transactionTotalsByCategory();
     const expBudgeted = sum(state.expenses, "budgeted");
-    const expActual = sum(state.expenses, "actual");
+    const expActual = state.expenses.reduce((total, item) => total + expenseActual(item, txTotals), 0);
     const savBudgeted = sum(state.savings, "budgeted");
     const savActual = sum(state.savings, "actual");
     const income = num(state.income);
@@ -149,6 +309,9 @@
     renderDebts();
     renderHistory();
     renderAdvisor();
+    renderTransactions();
+    renderMoneyTrail();
+    renderScripture();
   }
 
   function renderIncome() {
@@ -173,7 +336,7 @@
     const actual = el("input", {
       class: "cell-input cell-input--num editable", type: "number", inputmode: "decimal",
       min: "0", step: "0.01", value: item.actual || "", placeholder: "0.00", "aria-label": "Actual",
-      oninput: (e) => { item.actual = num(e.target.value); save(); refreshTotals(listKey); renderSummary(); },
+      oninput: (e) => { item.actual = num(e.target.value); save(); refreshTotals(listKey); renderSummary(); renderMoneyTrail(); },
     });
     const del = el("button", {
       class: "btn btn--icon", type: "button", title: "Remove", "aria-label": "Remove category",
@@ -186,10 +349,14 @@
     const cells = [
       el("td", { class: "col-name" }, [nameInput]),
       el("td", { class: "col-num" }, [budgeted]),
-      el("td", { class: "col-num" }, [actual]),
     ];
+    const logged = expenseActual(item) - num(item.actual);
+    cells.push(el("td", { class: "col-num" }, logged > 0 ? [
+      actual,
+      el("span", { class: "logged-hint", text: `+ ${money(logged)} logged` }),
+    ] : [actual]));
     if (withDiff) {
-      const diff = num(item.budgeted) - num(item.actual);
+      const diff = num(item.budgeted) - expenseActual(item);
       cells.push(el("td", { class: "col-num cell-calc " + diffClass(diff) }, [money(diff)]));
     }
     cells.push(el("td", { class: "col-act" }, [del]));
@@ -216,7 +383,8 @@
   function refreshTotals(listKey) {
     if (listKey === "expenses") {
       const b = sum(state.expenses, "budgeted");
-      const a = sum(state.expenses, "actual");
+      const txTotals = transactionTotalsByCategory();
+      const a = state.expenses.reduce((total, item) => total + expenseActual(item, txTotals), 0);
       const d = b - a;
       document.getElementById("expBudgetedTotal").textContent = money(b);
       document.getElementById("expActualTotal").textContent = money(a);
@@ -247,6 +415,7 @@
     sticky.className = "sticky-bar__value " + (t.leftover < 0 ? "neg" : "pos");
 
     renderBreakdownChart(t);
+    renderMoneyTrail();
     renderAdvisor();
   }
 
@@ -300,6 +469,111 @@
       ]));
     });
     wrap.appendChild(svg);
+  }
+
+  function renderScripture() {
+    const i = activeProfile === "ayo" ? 1 : Math.abs(new Date().getDate() - 1) % SCRIPTURES.length;
+    const verse = SCRIPTURES[i];
+    document.getElementById("scriptureQuote").textContent = verse.text;
+    document.getElementById("scriptureRef").textContent = verse.ref;
+  }
+
+  function renderMoneyTrail() {
+    const insights = document.getElementById("moneyInsights");
+    const trail = document.getElementById("trailList");
+    if (!insights || !trail || !state) return;
+    insights.textContent = "";
+    trail.textContent = "";
+
+    const t = totals();
+    const expenseRows = state.expenses
+      .map((e) => {
+        const actual = expenseActual(e);
+        return { name: e.name || "Unnamed", budgeted: num(e.budgeted), actual, diff: num(e.budgeted) - actual };
+      })
+      .filter((e) => e.actual > 0 || e.budgeted > 0)
+      .sort((a, b) => b.actual - a.actual);
+    const biggest = expenseRows[0];
+    const over = expenseRows.filter((e) => e.diff < 0).sort((a, b) => a.diff - b.diff)[0];
+    const trackedSpend = sum(state.transactions || [], "amount");
+    const committed = t.tithe + t.expActual + t.savActual;
+
+    [
+      { label: "Committed", value: money(committed), tone: committed <= t.income ? "good" : "bad" },
+      { label: "Logged purchases", value: money(trackedSpend), tone: trackedSpend > 0 ? "ink" : "muted" },
+      { label: "Biggest category", value: biggest ? biggest.name : "None yet", tone: "gold" },
+      { label: "Needs attention", value: over ? `${over.name} ${money(Math.abs(over.diff))} over` : "All within budget", tone: over ? "bad" : "good" },
+    ].forEach((item) => {
+      insights.appendChild(el("div", { class: "money-chip money-chip--" + item.tone }, [
+        el("span", { class: "money-chip__label", text: item.label }),
+        el("span", { class: "money-chip__value", text: item.value }),
+      ]));
+    });
+
+    if (!expenseRows.length) {
+      trail.appendChild(el("p", { class: "empty-hint", text: "Add actual spending or log purchases to see the breakdown." }));
+      return;
+    }
+
+    const maxActual = Math.max(...expenseRows.map((e) => e.actual), 1);
+    expenseRows.forEach((e) => {
+      const pctIncome = t.income > 0 ? (e.actual / t.income) * 100 : 0;
+      const pctWidth = Math.min((e.actual / maxActual) * 100, 100);
+      trail.appendChild(el("div", { class: "trail-row" }, [
+        el("div", { class: "trail-row__top" }, [
+          el("span", { class: "trail-row__name", text: e.name }),
+          el("span", { class: "trail-row__amount", text: `${money(e.actual)} · ${Math.round(pctIncome)}% income` }),
+        ]),
+        el("div", { class: "trail-row__bar" }, [el("span", { style: `width:${pctWidth}%` })]),
+        el("div", { class: "trail-row__meta " + (e.diff < 0 ? "neg" : "pos"), text: e.diff < 0 ? `${money(Math.abs(e.diff))} over plan` : `${money(e.diff)} left in plan` }),
+      ]));
+    });
+  }
+
+  function renderTransactions() {
+    const body = document.getElementById("transactionsBody");
+    if (!body) return;
+    body.textContent = "";
+    (state.transactions || []).forEach((tx) => body.appendChild(makeTransactionRow(tx)));
+    refreshTotals("expenses");
+  }
+
+  function makeTransactionRow(tx) {
+    const date = el("input", {
+      class: "cell-input editable", type: "date", value: tx.date || todayISO(), "aria-label": "Date",
+      oninput: (e) => { tx.date = e.target.value; save(); },
+    });
+    const category = el("select", {
+      class: "cell-input editable", "aria-label": "Category",
+      onchange: (e) => { tx.category = e.target.value; save(); renderTransactions(); renderExpenses(); renderSummary(); },
+    }, categoryOptions(tx.category));
+    category.value = tx.category || (state.expenses[0] && state.expenses[0].name) || "";
+    const note = el("input", {
+      class: "cell-input editable", type: "text", value: tx.note || "", placeholder: "What was it?", "aria-label": "Note",
+      oninput: (e) => { tx.note = e.target.value; save(); },
+    });
+    const amount = el("input", {
+      class: "cell-input cell-input--num editable", type: "number", inputmode: "decimal",
+      min: "0", step: "0.01", value: tx.amount || "", placeholder: "0.00", "aria-label": "Amount",
+      oninput: (e) => { tx.amount = num(e.target.value); save(); renderTransactions(); renderExpenses(); renderSummary(); },
+    });
+    const del = el("button", {
+      class: "btn btn--icon", type: "button", title: "Remove spend", "aria-label": "Remove spend",
+      onclick: () => { state.transactions = state.transactions.filter((x) => x.id !== tx.id); save(); renderTransactions(); renderExpenses(); renderSummary(); },
+    }, ["✕"]);
+    return el("tr", {}, [
+      el("td", { class: "col-date" }, [date]),
+      el("td", { class: "col-name" }, [category]),
+      el("td", { class: "col-name" }, [note]),
+      el("td", { class: "col-num" }, [amount]),
+      el("td", { class: "col-act" }, [del]),
+    ]);
+  }
+
+  function categoryOptions(current) {
+    const names = state.expenses.map((exp) => exp.name).filter(Boolean);
+    if (current && !names.includes(current)) names.unshift(current);
+    return names.map((name) => el("option", { value: name, text: name }));
   }
 
   /* ---------- Goals ---------- */
@@ -744,6 +1018,15 @@
     } else if (listKey === "sinking") {
       state.sinkingFunds.push({ id: uid(), name: "New fund", cost: 0, saved: 0, date: nextMonthISO() });
       save(); renderSinking();
+    } else if (listKey === "transactions") {
+      state.transactions.push({
+        id: uid(),
+        date: todayISO(),
+        category: (state.expenses[0] && state.expenses[0].name) || "",
+        note: "",
+        amount: 0,
+      });
+      save(); renderTransactions(); renderSummary();
     }
   }
 
@@ -763,8 +1046,8 @@
   }
 
   function resetAll() {
-    if (!confirm("Reset ALL data back to defaults? This cannot be undone.")) return;
-    state = structuredClone(DEFAULT_STATE);
+    if (!confirm(`Reset ${PROFILES[activeProfile].label}'s data back to defaults? This cannot be undone.`)) return;
+    state = defaultsFor(activeProfile);
     save();
     renderAll();
   }
@@ -787,6 +1070,30 @@
   });
   document.getElementById("saveSnapshotBtn").addEventListener("click", saveSnapshot);
   document.getElementById("resetBtn").addEventListener("click", resetAll);
+  document.getElementById("authForm").addEventListener("submit", submitLogin);
+  document.getElementById("authBackBtn").addEventListener("click", () => {
+    pendingProfile = "";
+    document.getElementById("authForm").hidden = true;
+  });
+  document.querySelectorAll("[data-profile-login]").forEach((btn) => {
+    btn.addEventListener("click", () => startLogin(btn.getAttribute("data-profile-login")));
+  });
+  document.getElementById("profileSwitchBtn").addEventListener("click", () => {
+    sessionStorage.removeItem(SESSION_PROFILE_KEY);
+    activeProfile = "";
+    state = null;
+    showAuth();
+  });
+  document.getElementById("lockBtn").addEventListener("click", () => {
+    sessionStorage.removeItem(SESSION_PROFILE_KEY);
+    activeProfile = "";
+    state = null;
+    showAuth();
+  });
 
-  renderAll();
+  if (activeProfile && root.profiles && root.profiles[activeProfile] && root.profiles[activeProfile].passHash) {
+    showApp(activeProfile);
+  } else {
+    showAuth();
+  }
 })();

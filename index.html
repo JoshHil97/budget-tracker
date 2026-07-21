@@ -9,10 +9,49 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%92%B7%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
+  <section class="auth-screen" id="authScreen">
+    <div class="auth-panel">
+      <p class="auth-kicker">Private Budget Rooms</p>
+      <h1>Choose your space</h1>
+      <p class="auth-copy">Josh and Ayo each get a separate budget, locked behind their own passcode on this device.</p>
+      <div class="profile-grid">
+        <button class="profile-card" type="button" data-profile-login="josh">
+          <span class="profile-card__name">Josh</span>
+          <span class="profile-card__sub">Budget, debt blitz, trips, giving</span>
+        </button>
+        <button class="profile-card profile-card--ayo" type="button" data-profile-login="ayo">
+          <span class="profile-card__name">Ayo</span>
+          <span class="profile-card__sub">Her private plan, goals, and spending</span>
+        </button>
+      </div>
+      <form class="auth-form" id="authForm" hidden>
+        <div class="auth-form__head">
+          <span id="authProfileName">Profile</span>
+          <button class="btn btn--sm" id="authBackBtn" type="button">Switch</button>
+        </div>
+        <label class="field field--stack">
+          <span class="field__label" id="authPassLabel">Passcode</span>
+          <input id="passcodeInput" class="input" type="password" autocomplete="current-password" minlength="4" />
+        </label>
+        <button class="btn btn--primary auth-submit" type="submit" id="authSubmitBtn">Unlock</button>
+        <p class="auth-note" id="authNote"></p>
+      </form>
+      <p class="auth-fine">This is local browser privacy. For bank-grade protection, this would need server authentication.</p>
+    </div>
+  </section>
+
+  <div id="appShell" hidden>
   <header class="app-header">
     <div class="app-header__inner">
-      <h1 class="app-title">💷 Budget &amp; Savings</h1>
-      <button id="resetBtn" class="btn btn--ghost" type="button">Reset all data</button>
+      <div>
+        <h1 class="app-title">Budget &amp; Savings</h1>
+        <p class="app-subtitle" id="profileSubtitle">Private room</p>
+      </div>
+      <div class="header-actions">
+        <button id="profileSwitchBtn" class="btn btn--ghost" type="button">Switch profile</button>
+        <button id="lockBtn" class="btn btn--ghost" type="button">Lock</button>
+        <button id="resetBtn" class="btn btn--ghost" type="button">Reset all data</button>
+      </div>
     </div>
   </header>
 
@@ -194,6 +233,42 @@
       </div>
     </section>
 
+    <section class="card scripture-card" id="scriptureSection">
+      <div class="card__head"><h2>Stewardship word</h2></div>
+      <blockquote id="scriptureQuote">The plans of the diligent lead surely to abundance.</blockquote>
+      <p id="scriptureRef">Proverbs 21:5</p>
+    </section>
+
+    <section class="card" id="moneyTrailSection">
+      <div class="card__head">
+        <h2>Where your money went</h2>
+      </div>
+      <div class="money-insights" id="moneyInsights"></div>
+      <div class="trail-list" id="trailList"></div>
+    </section>
+
+    <section class="card" id="transactionsSection">
+      <div class="card__head">
+        <h2>Spending log</h2>
+        <button class="btn btn--sm" data-add="transactions" type="button">+ Add spend</button>
+      </div>
+      <p class="section-hint">Log real purchases here. Choose a category and the app rolls them into Actual spending automatically.</p>
+      <div class="table-wrap">
+        <table class="alloc-table">
+          <thead>
+            <tr>
+              <th class="col-date">Date</th>
+              <th class="col-name">Category</th>
+              <th class="col-name">Note</th>
+              <th class="col-num">Amount</th>
+              <th class="col-act" aria-label="actions"></th>
+            </tr>
+          </thead>
+          <tbody id="transactionsBody"></tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- Savings goals tracker -->
     <section class="card" id="goalsSection">
       <div class="card__head">
@@ -265,6 +340,7 @@
       <span class="sticky-bar__label">Left over</span>
       <span class="sticky-bar__value" id="stickyLeftover">£0.00</span>
     </div>
+  </div>
   </div>
 
   <script src="app.js"></script>
