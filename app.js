@@ -45,6 +45,7 @@
     monthlySavingsTarget: 500,
     sinkingFunds: [
       { id: uid(), name: "Germany trip (hotel + spend)", cost: 580, saved: 0, date: nextMonthISO() },
+      { id: uid(), name: "Milan trip with Ayo", cost: 700, saved: 0, date: monthsAheadISO(2) },
     ],
     history: [], // { id, label, income, tithe, expenses, savings, leftover }
   };
@@ -52,13 +53,14 @@
   /* ---------- Utilities ---------- */
   function uid() { return "id" + Math.random().toString(36).slice(2, 10); }
 
-  // "YYYY-MM" for the first day of next month (used for a default trip date).
-  function nextMonthISO() {
+  // "YYYY-MM" for the first of the month n months from now.
+  function monthsAheadISO(n) {
     const d = new Date();
     d.setDate(1);
-    d.setMonth(d.getMonth() + 1);
+    d.setMonth(d.getMonth() + n);
     return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
   }
+  function nextMonthISO() { return monthsAheadISO(1); }
 
   // Whole months from now until the 1st of a "YYYY-MM" month, floored at 1.
   function monthsUntil(iso) {
