@@ -227,6 +227,7 @@
 
   function refreshFinancials() {
     if (!state) return;
+    renderOnboarding();
     renderIncome();
     refreshTotals("expenses");
     refreshTotals("savings");
@@ -258,6 +259,45 @@
   function closeConfirm() {
     pendingConfirm = null;
     document.getElementById("confirmModal").hidden = true;
+  }
+
+  function sectionAction(targetId, focusSelector, addKey) {
+    return () => {
+      if (addKey && !listForKey(addKey).length) addRow(addKey);
+      scrollToSection(targetId, focusSelector);
+    };
+  }
+
+  function listForKey(listKey) {
+    if (!state) return [];
+    if (listKey === "sinking") return state.sinkingFunds || [];
+    if (listKey === "transactions") return state.transactions || [];
+    if (listKey === "goals") return state.goals || [];
+    if (listKey === "debts") return state.debts || [];
+    return state[listKey] || [];
+  }
+
+  function scrollToSection(targetId, focusSelector) {
+    const target = document.getElementById(targetId);
+    if (!target) return;
+    const behaviour = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+    target.scrollIntoView({ behavior: behaviour, block: "start" });
+    window.setTimeout(() => {
+      const focusTarget = focusSelector ? target.querySelector(focusSelector) : target.querySelector("input, select, button");
+      if (focusTarget) {
+        const focusable = /^(A|BUTTON|INPUT|SELECT|TEXTAREA)$/.test(focusTarget.tagName) || focusTarget.hasAttribute("tabindex");
+        if (!focusable) focusTarget.setAttribute("tabindex", "-1");
+        focusTarget.focus({ preventScroll: true });
+      }
+    }, behaviour === "smooth" ? 280 : 0);
+  }
+
+  function emptyState(title, description, actionText, onAction) {
+    return el("div", { class: "empty-state" }, [
+      el("h4", { text: title }),
+      el("p", { text: description }),
+      actionText ? el("button", { class: "btn btn--sm", type: "button", onclick: onAction }, [actionText]) : null,
+    ].filter(Boolean));
   }
 
   /* ---------- State ---------- */
@@ -416,6 +456,7 @@
 
   /* ---------- Renderers ---------- */
   function renderAll() {
+    renderOnboarding();
     renderIncome();
     renderExpenses();
     renderSavings();
@@ -428,6 +469,64 @@
     renderTransactions();
     renderMoneyTrail();
     renderScripture();
+  }
+
+  function meaningfulDataExists() {
+    return num(state.income) > 0 ||
+      state.expenses.some((e) => num(e.budgeted) > 0 || num(e.actual) > 0) ||
+      state.savings.some((s) => num(s.budgeted) > 0 || num(s.actual) > 0) ||
+      state.sinkingFunds.some((f) => num(f.cost) > 0) ||
+      state.transactions.some((tx) => num(tx.amount) > 0) ||
+      state.history.length > 0;
+  }
+
+  function checklistItems() {
+    return [
+      { id: "income", label: "Add monthly income", done: num(state.income) > 0, action: sectionAction("incomeSection", "#incomeInput") },
+      { id: "expense", label: "Create at least one expense category", done: state.expenses.some((e) => cleanName(e.name) && num(e.budgeted) > 0), action: sectionAction("expensesSection", "input[aria-label='Category name']", "expenses") },
+      { id: "savings", label: "Allocate money towards savings", done: state.savings.some((s) => cleanName(s.name) && num(s.budgeted) > 0), action: sectionAction("savingsSection", "input[aria-label='Budgeted']", "savings") },
+      { id: "sinking", label: "Add an upcoming cost or sinking fund", done: state.sinkingFunds.some((f) => cleanName(f.name) && num(f.cost) > 0), action: sectionAction("sinkingSection", "input[aria-label='Total cost']", "sinking") },
+      { id: "transaction", label: "Record the first transaction", done: state.transactions.some((tx) => num(tx.amount) > 0), action: sectionAction("transactionsSection", "input[aria-label='Amount']", "transactions") },
+      { id: "history", label: "Save the current month", done: state.history.length > 0, action: sectionAction("historySection", "#saveSnapshotBtn") },
+    ];
+  }
+
+  function renderOnboarding() {
+    const intro = document.getElementById("introPanel");
+    if (intro) intro.hidden = meaningfulDataExists();
+
+    const list = document.getElementById("checklistList");
+    const status = document.getElementById("checklistStatus");
+    const message = document.getElementById("checklistMessage");
+    const body = document.getElementById("gettingStartedBody");
+    const toggle = document.getElementById("checklistToggle");
+    if (!list || !status || !message || !body || !toggle) return;
+
+    const items = checklistItems();
+    const complete = items.filter((item) => item.done).length;
+    status.textContent = `${complete} of ${items.length} complete`;
+    message.textContent = complete === items.length ? "Your budget is set up and ready to track." : "Complete these steps in order, or jump to the section you want to fill in first.";
+    list.textContent = "";
+    items.forEach((item) => {
+      list.appendChild(el("li", { class: item.done ? "is-complete" : "" }, [
+        el("span", { class: "checklist-list__mark", text: item.done ? "Done" : "Next" }),
+        el("button", {
+          class: "checklist-list__action",
+          type: "button",
+          disabled: item.done ? "true" : null,
+          onclick: item.done ? null : item.action,
+        }, [item.label]),
+      ]));
+    });
+    if (complete === items.length && !body.dataset.autoCollapsed) {
+      body.hidden = true;
+      toggle.setAttribute("aria-expanded", "false");
+      body.dataset.autoCollapsed = "true";
+    } else if (complete !== items.length && body.dataset.autoCollapsed) {
+      body.hidden = false;
+      toggle.setAttribute("aria-expanded", "true");
+      delete body.dataset.autoCollapsed;
+    }
   }
 
   function renderIncome() {
@@ -522,14 +621,28 @@
   function renderExpenses() {
     const body = document.getElementById("expensesBody");
     body.textContent = "";
-    state.expenses.forEach((item) => body.appendChild(makeAllocRow(item, "expenses", true)));
+    const items = state.expenses || [];
+    const hasPlannedExpense = items.some((item) => num(item.budgeted) > 0 || num(item.actual) > 0);
+    if (!items.length || !hasPlannedExpense) {
+      body.appendChild(el("tr", {}, [el("td", { colspan: "5", "data-label": "" }, [
+        emptyState("No expense budget entered yet", "Add regular costs such as rent, transport or groceries to begin planning your monthly spending.", "Add expense", sectionAction("expensesSection", "input[aria-label='Category name']", "expenses")),
+      ])]));
+    }
+    items.forEach((item) => body.appendChild(makeAllocRow(item, "expenses", true)));
     refreshTotals("expenses");
   }
 
   function renderSavings() {
     const body = document.getElementById("savingsBody");
     body.textContent = "";
-    state.savings.forEach((item) => body.appendChild(makeAllocRow(item, "savings", false)));
+    const items = state.savings || [];
+    const hasSavingsAllocation = items.some((item) => num(item.budgeted) > 0 || num(item.actual) > 0);
+    if (!items.length || !hasSavingsAllocation) {
+      body.appendChild(el("tr", {}, [el("td", { colspan: "4", "data-label": "" }, [
+        emptyState("No monthly savings allocated", "Decide how much of this month’s income you want to put aside.", "Add savings allocation", sectionAction("savingsSection", "input[aria-label='Budgeted']", "savings")),
+      ])]));
+    }
+    items.forEach((item) => body.appendChild(makeAllocRow(item, "savings", false)));
     refreshTotals("savings");
   }
 
@@ -572,8 +685,33 @@
     sticky.className = "sticky-bar__value " + (t.unallocatedIncome < 0 ? "neg" : "pos");
 
     renderBreakdownChart(t);
+    renderGuidance(t);
     renderMoneyTrail();
     renderAdvisor();
+  }
+
+  function renderGuidance(totalsArg) {
+    const banner = document.getElementById("budgetGuidance");
+    if (!banner || !state) return;
+    const t = totalsArg || totals();
+    let tone = "info";
+    let text = "";
+
+    if (t.income <= 0) {
+      text = "Add monthly income first. The app can then check expenses, savings, sinking funds and debt against what is available.";
+    } else if (t.plannedCommitments > t.income) {
+      tone = "warn";
+      text = `Planned commitments are ${money(t.plannedCommitments - t.income)} above monthly income. Reduce budgets, savings allocations, sinking funds or debt payments until the plan fits.`;
+    } else if (t.unallocatedIncome > 0.005) {
+      text = `You still have ${money(t.unallocatedIncome)} unallocated. Give it a job before the month runs away with it.`;
+    } else {
+      tone = "good";
+      text = "Every pound of income has been assigned. Your budget is set up and ready to track.";
+    }
+
+    banner.hidden = false;
+    banner.className = "guidance-banner guidance-banner--" + tone;
+    banner.textContent = text;
   }
 
   /* ---------- Donut chart: expenses vs each savings category ---------- */
@@ -668,7 +806,7 @@
     });
 
     if (!expenseRows.length) {
-      trail.appendChild(el("p", { class: "empty-hint", text: "Add actual spending or log purchases to see the breakdown." }));
+      trail.appendChild(emptyState("Insights need spending data", "Add expense categories or record purchases before spending insights can be produced.", "Record spending", sectionAction("transactionsSection", "input[aria-label='Amount']", "transactions")));
       return;
     }
 
@@ -691,7 +829,14 @@
     const body = document.getElementById("transactionsBody");
     if (!body) return;
     body.textContent = "";
-    (state.transactions || []).forEach((tx) => body.appendChild(makeTransactionRow(tx)));
+    const items = state.transactions || [];
+    const hasRecordedSpending = items.some((tx) => num(tx.amount) > 0);
+    if (!items.length || !hasRecordedSpending) {
+      body.appendChild(el("tr", {}, [el("td", { colspan: "5", "data-label": "" }, [
+        emptyState("No spending recorded", "Record purchases to compare your actual spending against your budget.", "Record spending", sectionAction("transactionsSection", "input[aria-label='Amount']", "transactions")),
+      ])]));
+    }
+    items.forEach((tx) => body.appendChild(makeTransactionRow(tx)));
     refreshTotals("expenses");
   }
 
@@ -747,7 +892,12 @@
   function renderGoals() {
     const container = document.getElementById("goalsList");
     container.textContent = "";
-    state.goals.forEach((g) => container.appendChild(makeGoalCard(g)));
+    const items = state.goals || [];
+    const hasGoalProgress = items.some((g) => num(g.target) > 0 || num(g.current) > 0 || num(g.monthly) > 0);
+    if (!items.length || !hasGoalProgress) {
+      container.appendChild(emptyState("No savings goal targets yet", "Create a target for something you are working towards, such as an emergency fund or house deposit.", "Create savings goal", sectionAction("goalsSection", "input[aria-label='Goal name']", "goals")));
+    }
+    items.forEach((g) => container.appendChild(makeGoalCard(g)));
   }
 
   function goalCalc(g) {
@@ -881,7 +1031,13 @@
   function renderDebts() {
     const body = document.getElementById("debtBody");
     body.textContent = "";
-    state.debts.forEach((d) => body.appendChild(makeDebtRow(d)));
+    const items = state.debts || [];
+    if (!items.length) {
+      body.appendChild(el("tr", {}, [el("td", { colspan: "6", "data-label": "" }, [
+        emptyState("No debts being tracked", "Add a debt to calculate repayment progress and include payments in your monthly plan.", "Add debt", sectionAction("debtSection", "input[aria-label='Debt name']", "debts")),
+      ])]));
+    }
+    items.forEach((d) => body.appendChild(makeDebtRow(d)));
   }
 
   function makeDebtRow(d) {
@@ -947,7 +1103,7 @@
   function payoffText(d) {
     const m = debtMonths(d.balance, d.apr, d.payment);
     if (m == null) return "—";
-    if (m === 0) return "Clear";
+    if (m === 0) return "Cleared";
     if (m === Infinity) return "Never*";
     const yrs = Math.floor(m / 12), mo = m % 12;
     if (m < 12) return `${m} mo`;
@@ -978,7 +1134,13 @@
   function renderSinking() {
     const body = document.getElementById("sinkingBody");
     body.textContent = "";
-    state.sinkingFunds.forEach((f) => body.appendChild(makeSinkingRow(f)));
+    const items = state.sinkingFunds || [];
+    if (!items.length) {
+      body.appendChild(el("tr", {}, [el("td", { colspan: "7", "data-label": "" }, [
+        emptyState("No upcoming costs planned", "Prepare for known future expenses by saving towards them gradually.", "Add upcoming cost", sectionAction("sinkingSection", "input[aria-label='Total cost']", "sinking")),
+      ])]));
+    }
+    items.forEach((f) => body.appendChild(makeSinkingRow(f)));
     updateSinkingTotals();
   }
 
@@ -991,7 +1153,7 @@
     };
     const name = el("input", {
       class: "cell-input cell-input--name editable", type: "text", value: f.name,
-      placeholder: "e.g. Germany trip", "aria-label": "Fund name",
+      placeholder: "Car insurance", "aria-label": "Fund name",
       oninput: (e) => { commitName(e.target, state.sinkingFunds, f, "Sinking fund"); },
     });
     const cost = el("input", {
@@ -1014,7 +1176,7 @@
       },
     });
     const start = el("input", {
-      class: "cell-input editable", type: "month", value: f.start || "", "aria-label": "Start saving from",
+      class: "cell-input editable", type: "month", value: f.start || "", "aria-label": "Start saving from", title: "Optional starting month",
       oninput: (e) => {
         const message = monthValidation(e.target.value, "Start month", { required: false, allowPast: true });
         if (message) { setFieldError(e.target, message); return; }
@@ -1026,7 +1188,7 @@
       },
     });
     const date = el("input", {
-      class: "cell-input editable", type: "month", value: f.date || "", "aria-label": "Needed by",
+      class: "cell-input editable", type: "month", value: f.date || "", "aria-label": "Needed by", title: "Target month",
       oninput: (e) => {
         const message = monthValidation(e.target.value, "Target month", { required: true, allowPast: false });
         if (message) { setFieldError(e.target, message); return; }
@@ -1171,8 +1333,18 @@
     const body = document.getElementById("historyBody");
     const empty = document.getElementById("historyEmpty");
     body.textContent = "";
-    if (!state.history.length) { empty.style.display = "block"; }
-    else { empty.style.display = "none"; }
+    empty.textContent = "";
+    if (!state.history.length) {
+      empty.style.display = "block";
+      empty.appendChild(emptyState(
+        "No monthly history yet",
+        "Save a monthly snapshot when you are ready to compare income, spending and savings over time.",
+        num(state.income) > 0 ? "Save current month" : "",
+        saveSnapshot
+      ));
+    } else {
+      empty.style.display = "none";
+    }
 
     state.history.forEach((h) => {
       const del = el("button", {
@@ -1277,8 +1449,9 @@
         note: "",
         amount: 0,
       });
-      save(); renderTransactions(); renderSummary(); notify("Expense added");
+      save(); renderTransactions(); renderSummary(); notify("Transaction added");
     }
+    renderOnboarding();
   }
 
   function saveSnapshot() {
@@ -1294,6 +1467,7 @@
     else state.history.push(snap);
     save();
     renderHistory();
+    renderOnboarding();
     notify("Budget snapshot saved");
   }
 
@@ -1320,14 +1494,14 @@
     }
     state.income = next;
     setFieldError(e.target, "");
-    save(); renderIncome(); renderSummary();
+    save(); renderOnboarding(); renderIncome(); renderSummary();
   });
   document.getElementById("titheInput").addEventListener("input", (e) => {
     const message = decimalValidation(e.target.value, "Tithe percentage", { max: 100 });
     if (message) { setFieldError(e.target, message); return; }
     state.tithePct = Number(e.target.value);
     setFieldError(e.target, "");
-    save(); renderIncome(); renderSummary();
+    save(); renderOnboarding(); renderIncome(); renderSummary();
   });
   document.getElementById("bufferInput").addEventListener("input", (e) => {
     const message = decimalValidation(e.target.value, "Safety buffer", { max: 12 });
@@ -1347,6 +1521,25 @@
   });
   document.querySelectorAll("[data-add]").forEach((btn) => {
     btn.addEventListener("click", () => addRow(btn.getAttribute("data-add")));
+  });
+  document.querySelectorAll(".section-nav a").forEach((link) => {
+    link.addEventListener("click", (e) => {
+      const targetId = link.getAttribute("href").slice(1);
+      const target = document.getElementById(targetId);
+      if (!target) return;
+      e.preventDefault();
+      scrollToSection(targetId, "h2");
+    });
+  });
+  document.getElementById("setupBudgetBtn").addEventListener("click", () => {
+    scrollToSection("incomeSection", "#incomeInput");
+  });
+  document.getElementById("checklistToggle").addEventListener("click", () => {
+    const body = document.getElementById("gettingStartedBody");
+    const toggle = document.getElementById("checklistToggle");
+    const nextHidden = !body.hidden;
+    body.hidden = nextHidden;
+    toggle.setAttribute("aria-expanded", String(!nextHidden));
   });
   document.getElementById("saveSnapshotBtn").addEventListener("click", saveSnapshot);
   document.getElementById("resetBtn").addEventListener("click", resetAll);

@@ -138,6 +138,218 @@ body {
   min-width: 0;
 }
 
+.section-nav {
+  position: sticky;
+  top: 74px;
+  z-index: 12;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 6px;
+  margin: -8px 0 -10px;
+  border: 1px solid rgba(231, 221, 208, .78);
+  border-radius: var(--radius);
+  background: rgba(255, 250, 244, .92);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 6px 18px rgba(43, 33, 23, .06);
+  scrollbar-width: none;
+}
+.section-nav::-webkit-scrollbar { display: none; }
+.section-nav a {
+  flex: 1 0 auto;
+  color: var(--c-primary-dark);
+  text-decoration: none;
+  text-align: center;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: .86rem;
+  font-weight: 850;
+}
+.section-nav a:hover,
+.section-nav a:focus-visible {
+  background: #f4eadf;
+  outline: none;
+}
+
+.intro-panel {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid rgba(184, 135, 51, .34);
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, #fffaf4, #f7ead9);
+  box-shadow: var(--shadow);
+}
+.intro-panel__eyebrow {
+  margin: 0 0 5px;
+  color: var(--c-gold);
+  font-size: .76rem;
+  font-weight: 900;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.intro-panel h2 {
+  margin: 0;
+  font-size: clamp(1.35rem, 3vw, 2rem);
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+.intro-panel p:last-child {
+  margin: 8px 0 0;
+  color: var(--c-muted);
+  line-height: 1.45;
+  max-width: 58ch;
+}
+
+.checklist-card {
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  background: #fffaf4;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.checklist-card__toggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--c-text);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.checklist-card__toggle:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: -3px;
+}
+.checklist-card__eyebrow {
+  display: block;
+  color: var(--c-primary);
+  font-size: .74rem;
+  font-weight: 900;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.checklist-card__status {
+  flex: 0 0 auto;
+  color: var(--c-muted);
+  font-size: .84rem;
+  font-weight: 850;
+}
+.checklist-card__body {
+  border-top: 1px solid var(--c-border);
+  padding: 14px 18px 18px;
+}
+.checklist-card__message {
+  margin: 0 0 12px;
+  color: var(--c-muted);
+  line-height: 1.45;
+}
+.checklist-list {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+}
+.checklist-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px;
+}
+.checklist-list li.is-complete {
+  background: var(--c-good-bg);
+  border-color: #b7d990;
+}
+.checklist-list__mark {
+  flex: 0 0 auto;
+  width: 42px;
+  color: var(--c-muted);
+  font-size: .7rem;
+  font-weight: 900;
+  text-align: center;
+  text-transform: uppercase;
+}
+.is-complete .checklist-list__mark { color: var(--c-good); }
+.checklist-list__action {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--c-primary-dark);
+  font: inherit;
+  font-size: .9rem;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+  padding: 4px;
+  min-width: 0;
+}
+.checklist-list__action:disabled {
+  color: var(--c-text);
+  cursor: default;
+}
+.checklist-list__action:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.guidance-banner {
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  background: #fffaf4;
+  color: var(--c-primary-dark);
+  font-size: .92rem;
+  font-weight: 800;
+  line-height: 1.45;
+}
+.guidance-banner--good { background: var(--c-good-bg); border-color: #b7d990; color: #14532d; }
+.guidance-banner--warn { background: var(--c-warn-bg); border-color: #f1c27a; color: #7c2d12; }
+
+.overview-card__hint,
+.stat__hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--c-muted);
+  font-size: .75rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.empty-state {
+  width: 100%;
+  padding: 18px;
+  border: 1px dashed #d7c5af;
+  border-radius: var(--radius);
+  background: #fffaf4;
+  text-align: center;
+}
+.empty-state h4 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.25;
+}
+.empty-state p {
+  margin: 7px auto 12px;
+  max-width: 48ch;
+  color: var(--c-muted);
+  line-height: 1.45;
+}
+.empty-state p:last-child { margin-bottom: 0; }
+
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -176,6 +388,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  scroll-margin-top: 140px;
 }
 .page-group__head {
   border-bottom: 1px solid var(--c-border);
@@ -211,6 +424,7 @@ body {
   padding: 18px;
   box-shadow: var(--shadow);
   min-width: 0;
+  scroll-margin-top: 140px;
 }
 .card__head {
   display: flex;
@@ -540,6 +754,35 @@ body {
     white-space: normal;
   }
   .container { padding: 14px 10px 18px; gap: 24px; }
+  .section-nav {
+    top: 122px;
+    margin: -4px 0 -8px;
+    padding: 5px;
+  }
+  .section-nav a {
+    flex-basis: auto;
+    padding: 8px 10px;
+    font-size: .82rem;
+  }
+  .intro-panel {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 15px;
+  }
+  .intro-panel .btn { width: 100%; }
+  .checklist-card__toggle {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 14px;
+  }
+  .checklist-card__status { font-size: .8rem; }
+  .checklist-card__body { padding: 13px 14px 14px; }
+  .checklist-list { grid-template-columns: 1fr; }
+  .checklist-list li { align-items: flex-start; }
+  .checklist-list__mark { width: 38px; padding-top: 5px; }
+  .overview-card__hint { font-size: .7rem; }
+  .empty-state { padding: 15px 12px; }
+  .page-group, .card { scroll-margin-top: 180px; }
   .overview-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
   .overview-card { padding: 13px; }
   .overview-card__label { font-size: .68rem; }

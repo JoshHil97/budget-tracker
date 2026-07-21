@@ -59,6 +59,35 @@
   </header>
 
   <main class="container">
+    <nav class="section-nav" aria-label="Dashboard sections">
+      <a href="#planningGroup">Planning</a>
+      <a href="#trackingGroup">Tracking</a>
+      <a href="#progressGroup">Progress</a>
+    </nav>
+
+    <section class="intro-panel" id="introPanel" hidden>
+      <div>
+        <p class="intro-panel__eyebrow">Start here</p>
+        <h2>Build your budget in three steps.</h2>
+        <p>Plan your income and commitments, track what you actually spend, then review your progress over time.</p>
+      </div>
+      <button class="btn btn--primary" id="setupBudgetBtn" type="button">Set up my budget</button>
+    </section>
+
+    <section class="checklist-card" id="gettingStartedCard" aria-labelledby="gettingStartedTitle">
+      <button class="checklist-card__toggle" id="checklistToggle" type="button" aria-expanded="true" aria-controls="gettingStartedBody">
+        <span>
+          <span class="checklist-card__eyebrow">Getting started</span>
+          <strong id="gettingStartedTitle">Set up your first budget</strong>
+        </span>
+        <span class="checklist-card__status" id="checklistStatus">0 of 6 complete</span>
+      </button>
+      <div class="checklist-card__body" id="gettingStartedBody">
+        <p class="checklist-card__message" id="checklistMessage"></p>
+        <ol class="checklist-list" id="checklistList"></ol>
+      </div>
+    </section>
+
     <section class="overview-grid" aria-label="Budget overview">
       <article class="overview-card">
         <span class="overview-card__label">Monthly Income</span>
@@ -66,6 +95,7 @@
       </article>
       <article class="overview-card">
         <span class="overview-card__label">Planned Commitments</span>
+        <span class="overview-card__hint">Budgeted expenses, savings, sinking funds and debt payments assigned this month.</span>
         <strong class="overview-card__value" id="sumPlannedCommitments">£0.00</strong>
       </article>
       <article class="overview-card">
@@ -74,11 +104,14 @@
       </article>
       <article class="overview-card overview-card--safe" id="leftoverStat">
         <span class="overview-card__label">Safe To Spend</span>
+        <span class="overview-card__hint">The non-negative amount available without exceeding the current plan.</span>
         <strong class="overview-card__value" id="sumLeftover">£0.00</strong>
       </article>
     </section>
 
-    <section class="page-group" aria-labelledby="planningTitle">
+    <div class="guidance-banner" id="budgetGuidance" hidden></div>
+
+    <section class="page-group" id="planningGroup" aria-labelledby="planningTitle">
       <div class="page-group__head">
         <p class="page-group__eyebrow">Planning</p>
         <h2 id="planningTitle">Plan the month before it happens.</h2>
@@ -88,14 +121,14 @@
       <div class="card__head">
         <div>
           <h3>Income</h3>
-          <p class="section-hint">Set the take-home pay and giving percentage for this month.</p>
+          <p class="section-hint">Enter monthly income first so budgets and savings can be checked against available money.</p>
         </div>
       </div>
       <label class="field field--stack">
         <span class="field__label">Monthly take-home pay</span>
         <span class="input-money">
           <span class="input-money__symbol">£</span>
-          <input id="incomeInput" class="input input--money editable" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" />
+          <input id="incomeInput" class="input input--money editable" type="number" inputmode="decimal" min="0" step="0.01" placeholder="2500.00" />
         </span>
       </label>
       <div class="tithe-row">
@@ -150,7 +183,7 @@
       <div class="card__head">
         <div>
           <h3>Savings Allocation</h3>
-          <p class="section-hint">Assign money towards pots, goals, and future priorities.</p>
+          <p class="section-hint">Set aside money from this month&rsquo;s income for savings pots or priorities.</p>
         </div>
         <button class="btn btn--sm" data-add="savings" type="button">+ Add category</button>
       </div>
@@ -181,7 +214,7 @@
       <div class="card__head">
         <div>
           <h3>Sinking Funds</h3>
-          <p class="section-hint">Save monthly towards known future expenses.</p>
+          <p class="section-hint">Save gradually for a known future expense with a target month.</p>
         </div>
         <button class="btn btn--sm" data-add="sinking" type="button">+ Add fund</button>
       </div>
@@ -237,7 +270,7 @@
       </div>
     </section>
 
-    <section class="page-group" aria-labelledby="trackingTitle">
+    <section class="page-group" id="trackingGroup" aria-labelledby="trackingTitle">
       <div class="page-group__head">
         <p class="page-group__eyebrow">Tracking</p>
         <h2 id="trackingTitle">See what is actually happening.</h2>
@@ -282,7 +315,7 @@
       <div class="card__head">
         <div>
           <h3>Actual Spending</h3>
-          <p class="section-hint">Understand the biggest categories and what needs attention.</p>
+          <p class="section-hint">Shows actual spending once categories or transactions have been entered.</p>
         </div>
       </div>
       <div class="money-insights" id="moneyInsights"></div>
@@ -293,7 +326,7 @@
       <div class="card__head">
         <div>
           <h3>Monthly Summary</h3>
-          <p class="section-hint">Review giving, saving, spending, and the full money breakdown.</p>
+          <p class="section-hint">Review giving, saving, spending, remaining budget, cash remaining and unallocated income.</p>
         </div>
       </div>
       <div class="summary-grid">
@@ -307,14 +340,17 @@
         </div>
         <div class="stat">
           <span class="stat__label">Remaining Budget</span>
+          <span class="stat__hint">Planned category budgets not yet spent.</span>
           <span class="stat__value" id="sumRemainingBudget">£0.00</span>
         </div>
         <div class="stat">
           <span class="stat__label">Actual Cash Remaining</span>
+          <span class="stat__hint">Monthly income minus actual recorded outgoings.</span>
           <span class="stat__value" id="sumActualCashRemaining">£0.00</span>
         </div>
         <div class="stat">
           <span class="stat__label">Unallocated Income</span>
+          <span class="stat__hint">Income not yet assigned to planned commitments.</span>
           <span class="stat__value" id="sumUnallocatedIncome">£0.00</span>
         </div>
       </div>
@@ -329,7 +365,7 @@
       </div>
     </section>
 
-    <section class="page-group" aria-labelledby="progressTitle">
+    <section class="page-group" id="progressGroup" aria-labelledby="progressTitle">
       <div class="page-group__head">
         <p class="page-group__eyebrow">Progress</p>
         <h2 id="progressTitle">Track the bigger picture.</h2>
@@ -339,7 +375,7 @@
       <div class="card__head">
         <div>
           <h3>Savings Goals</h3>
-          <p class="section-hint">Monitor progress towards each target and completion date.</p>
+          <p class="section-hint">Track target balances you want to reach over time.</p>
         </div>
         <button class="btn btn--sm" data-add="goals" type="button">+ Add goal</button>
       </div>
@@ -402,7 +438,7 @@
           <tbody id="historyBody"></tbody>
         </table>
       </div>
-      <p class="empty-hint" id="historyEmpty">No snapshots yet — hit “Save this month” to start tracking trends.</p>
+      <div class="empty-hint" id="historyEmpty"></div>
     </section>
       </div>
     </section>
@@ -411,7 +447,7 @@
   <!-- Sticky summary bar (mobile) -->
   <div class="sticky-bar" id="stickyBar">
     <div class="sticky-bar__item">
-      <span class="sticky-bar__label">Left over</span>
+      <span class="sticky-bar__label">Safe to spend</span>
       <span class="sticky-bar__value" id="stickyLeftover">£0.00</span>
     </div>
   </div>
