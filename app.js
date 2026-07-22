@@ -15,53 +15,35 @@
   const MAX_IMPORT_BYTES = 5 * 1024 * 1024; // Local budget files should be small; reject huge files before parsing to protect the browser.
 
   /* ---------- Defaults ---------- */
+  // Neutral starter template. No personal data lives in the code — real
+  // figures are entered by the user and kept only in their own browser.
   const DEFAULT_STATE = {
-    income: 2022.64,
+    income: 0,
     expenses: [
-      { name: "Transport", budgeted: 104 },
-      { name: "Phone", budgeted: 60 },
-      { name: "Internet / WiFi", budgeted: 35 },
-      { name: "Subscriptions (Claude, ChatGPT +)", budgeted: 90 },
-      { name: "Groceries (work + home)", budgeted: 217 },
-      { name: "Takeaway (treat cap)", budgeted: 40 },
-      { name: "Family support (Mum/Dad)", budgeted: 75 },
-      { name: "Personal care (toiletries, perfume…)", budgeted: 30 },
-      { name: "Cleaning", budgeted: 20 },
-      { name: "Date night with Adedola (incl. transport)", budgeted: 150 },
-      { name: "Spending on Adedola (buffer)", budgeted: 100 },
-      { name: "Personal allowance (to live by)", budgeted: 260 },
+      { name: "Rent / Mortgage", budgeted: 0 },
+      { name: "Transport", budgeted: 0 },
+      { name: "Phone", budgeted: 0 },
+      { name: "Internet / WiFi", budgeted: 0 },
+      { name: "Groceries", budgeted: 0 },
+      { name: "Subscriptions", budgeted: 0 },
+      { name: "Personal care", budgeted: 0 },
+      { name: "Personal allowance", budgeted: 0 },
     ].map((e) => ({ id: uid(), name: e.name, budgeted: e.budgeted, actual: 0 })),
     savings: [
-      { name: "Emergency / High-Yield pot", budgeted: 500 },
+      { name: "Emergency / High-Yield pot", budgeted: 0 },
       { name: "House Down Payment Fund", budgeted: 0 },
-      { name: "Wedding Fund", budgeted: 0 },
       { name: "Investing", budgeted: 0 },
     ].map((s) => ({ id: uid(), name: s.name, budgeted: s.budgeted, actual: 0 })),
     goals: [
-      { name: "Emergency Fund", target: 0, current: 0, monthly: 500 },
+      { name: "Emergency Fund", target: 0, current: 0, monthly: 0 },
       { name: "House Down Payment", target: 0, current: 0, monthly: 0 },
-      { name: "High-Yield Savings/Investing", target: 0, current: 0, monthly: 0 },
-      { name: "Wedding Fund", target: 0, current: 0, monthly: 0 },
     ].map((g) => Object.assign({ id: uid() }, g)),
-    debts: [
-      { name: "Overdraft", balance: 1025, apr: 39.9, payment: 0 },
-      { name: "Credit card", balance: 250, apr: 24.9, payment: 0 },
-      { name: "Personal debt", balance: 200, apr: 0, payment: 0 },
-      { name: "Owe a friend (this month)", balance: 50, apr: 0, payment: 0 },
-      { name: "Friends payback (1st)", balance: 100, apr: 0, payment: 0 },
-      { name: "Friends payback (rest)", balance: 600, apr: 0, payment: 0 },
-    ].map((d) => Object.assign({ id: uid() }, d)),
+    debts: [],
     tithePct: 10,
     emergencyMonths: 3,
     monthlySavingsTarget: 0,
-    sinkingFunds: [
-      { id: uid(), name: "Germany trip (hotel + spend)", cost: 580, saved: 0, start: "", date: nextMonthISO() },
-      { id: uid(), name: "Milan trip with Adedola (est.)", cost: 700, saved: 0, start: monthsAheadISO(1), date: monthsAheadISO(2) },
-    ],
-    transactions: [
-      { id: uid(), date: todayISO(), category: "Transport", note: "Train / travel", amount: 0 },
-      { id: uid(), date: todayISO(), category: "Groceries (work + home)", note: "Food shop", amount: 0 },
-    ],
+    sinkingFunds: [],
+    transactions: [],
     history: [], // { id, label, income, tithe, expenses, savings, leftover }
   };
 
