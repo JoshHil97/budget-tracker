@@ -394,6 +394,22 @@
     ].filter(Boolean));
   }
 
+  /* ---------- One-time device purge ----------
+     Clears any budget data cached on this device by an earlier build, so no
+     old figures linger anywhere. Runs once per device (guarded by a flag),
+     then normal loading seeds a fresh, empty starter. Temporary — removed
+     once every device has loaded it at least once. */
+  const PURGE_FLAG = "budget-savings-app.purge.20260722";
+  try {
+    if (!localStorage.getItem(PURGE_FLAG)) {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(ROOT_KEY);
+      localStorage.removeItem(RECOVERY_KEY);
+      try { sessionStorage.removeItem(SESSION_PROFILE_KEY); } catch (e) { /* no sessionStorage */ }
+      localStorage.setItem(PURGE_FLAG, "1");
+    }
+  } catch (e) { /* localStorage unavailable */ }
+
   /* ---------- State ---------- */
   let root = loadRoot();
   let activeProfile = sessionStorage.getItem(SESSION_PROFILE_KEY) || "";
